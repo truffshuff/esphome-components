@@ -71,9 +71,9 @@ CONFIG_SCHEMA = cv.All(
         ).extend(
             spi.spi_device_schema(
                 cs_pin_required=False,
-                default_mode="MODE0",
-                default_data_rate=20e6,
-                quad=True,
+                default_data_rate=SPIDataRate.DATA_RATE_20MHZ,
+                default_mode=SPIMode.MODE0,
+                mode=TYPE_QUAD,
             )
         )
     ),
