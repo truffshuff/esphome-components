@@ -51,12 +51,18 @@ void AXS15231Touchscreen::update_touches() {
   i2c::ErrorCode err; 
   uint8_t data[AXS_TOUCH_BUF_HEAD_LEN + AXS_TOUCH_POINT_LEN] = {0};
 
+  /*  Commented Out to fix deplication error mentiond in esphome builder.
   err = this->write(AXS_READ_TOUCHPAD, sizeof(AXS_READ_TOUCHPAD), false);
   I2C_ERROR_CHECK(err);
 
   err = this->read(data, sizeof(data));
-  I2C_ERROR_CHECK(err);
+  I2C_ERROR_CHECK(err); */
 
+  /*fix for depricated function */
+
+  err = this->write_read(AXS_READ_TOUCHPAD, sizeof(AXS_READ_TOUCHPAD), data, sizeof(data));
+  I2C_ERROR_CHECK(err);
+  
   this->status_clear_warning();
 
   /*
