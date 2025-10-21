@@ -51,7 +51,7 @@ void AXS15231Touchscreen::update_touches() {
   // Prevent runaway I2C polling - add minimum delay between reads
   static uint32_t last_read_time = 0;
   uint32_t now = millis();
-  if (now - last_read_time < 50) {  // Minimum 50ms between I2C reads
+  if (now - last_read_time < 100) {  // Minimum 100ms between I2C reads (increased from 50ms)
     return;
   }
   last_read_time = now;
