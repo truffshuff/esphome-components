@@ -65,7 +65,10 @@ async def to_code(config):
     cg.add(var.set_wifi_timeout(config[CONF_WIFI_TIMEOUT]))
 
     # No library dependency needed - using ESP-IDF native NimBLE
-    # Ensure NimBLE is enabled in ESP-IDF config
+    # Ensure NimBLE is enabled and Bluedroid is explicitly disabled
     if CORE.using_esp_idf:
         cg.add_build_flag("-DCONFIG_BT_NIMBLE_ENABLED=1")
         cg.add_build_flag("-DCONFIG_BT_BLUEDROID_ENABLED=0")
+        cg.add_build_flag("-DCONFIG_BLUEDROID_ENABLED=0")
+        cg.add_build_flag("-DCONFIG_BT_CLASSIC_ENABLED=0")
+        cg.add_build_flag("-DCONFIG_BT_BLE_ENABLED=0")
