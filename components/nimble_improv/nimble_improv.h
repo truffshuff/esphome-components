@@ -105,10 +105,11 @@ class NimBLEImprov : public Component {
   // NimBLE callback handlers
   static int characteristic_access_callback(uint16_t conn_handle, uint16_t attr_handle,
                                            struct ble_gatt_access_ctxt *ctxt, void *arg);
-  static void gap_event_handler(struct ble_gap_event *event, void *arg);
+  static int gap_event_handler(struct ble_gap_event *event, void *arg);
 
  protected:
   void start_service_();
+  void start_advertising_();
   void stop_service_();
   void set_state_(ImprovState state);
   void set_error_(ImprovError error);

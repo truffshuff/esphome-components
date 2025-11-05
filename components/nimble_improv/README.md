@@ -1,194 +1,174 @@
-# NimBLE Improv WiFi Provisioning Component
+# NimBLE Improv - Complete Implementation
 
-A NimBLE-based implementation of the [Improv WiFi](https://www.improv-wifi.com/) provisioning protocol for ESPHome.
+This is a **fully functional** implementation of the Improv WiFi provisioning protocol using ESP-IDF's native NimBLE stack for ESPHome.
 
-## Overview
+## What's Implemented
 
-This component allows you to reconfigure WiFi credentials on your ESP32 device via BLE, using the lightweight NimBLE Bluetooth stack instead of the heavier Bluedroid stack.
+This implementation includes **all the missing pieces** from the upstream stub:
 
-### Why NimBLE Instead of `esp32_improv`?
+### ✅ GATT Service Registration
+- Complete `ble_gatt_svc_def` structure with all 5 Improv characteristics
+- Service UUID: `00467768-6228-2272-4663-277478268000`
+- Characteristics:
+  - **Status** (read + notify): Current provisioning state
+  - **Error** (read): Last error code
+  - **RPC Command** (write): Receives commands from client
+  - **RPC Result** (read + notify): Sends responses to client
+  - **Capabilities** (read): Reports device capabilities
 
-- **Lower Memory**: ~100KB less RAM usage compared to Bluedroid-based `esp32_improv`
-- **Compatibility**: Works alongside `nimble_proxy` for simultaneous BLE proxy and provisioning
-- **Efficiency**: Better suited for ESP32-S3 devices with multiple BLE operations
-- **Modern**: Uses ESP-IDF's native NimBLE implementation
+### ✅ Characteristic Access Callbacks
+- Full read/write handlers for all characteristics
+- Proper UUID matching and operation handling
+- Command parsing for WIFI_SETTINGS, IDENTIFY, GET_DEVICE_INFO
+- Response formatting and transmission
 
-## Features
+### ✅ GAP Event Handling
+- Connection/disconnection events
+- Auto-authorization (if no authorizer configured)
+- Automatic advertising restart after disconnect
+- Connection handle management
 
-- ✅ WiFi provisioning via BLE
-- ✅ Works while device is connected to existing WiFi
-- ✅ Compatible with Improv WiFi apps (Android/iOS)
-- ✅ Optional authorization button
-- ✅ Visual identification LED support
-- ✅ Configurable timeouts
-- ✅ Coexists with `nimble_proxy` component
+### ✅ BLE Advertising
+- Advertises Improv service UUID in scan response
+- Configurable device name ("Halo Improv")
+- General discoverable mode
+- Automatic restart on advertising complete
 
-## Installation
+### ✅ WiFi Provisioning Flow
+1. Client connects via BLE
+2. Device auto-authorizes (or waits for authorizer trigger)
+3. Client sends WiFi credentials via RPC Command
+4. Device attempts WiFi connection with timeout
+5. On success: Sends IP address redirect URL via RPC Result
+6. On failure: Sets error code and returns to authorized state
 
-### Add to External Components
+### ✅ Protocol Commands Implemented
+- **WIFI_SETTINGS (0x01)**: Parse SSID/password, attempt connection
+- **IDENTIFY (0x02)**: Trigger status indicator (if configured)
+- **GET_DEVICE_INFO (0x03)**: Return firmware, version, hardware, device name
+- **GET_WIFI_NETWORKS (0x04)**: Stub for future WiFi scanning
 
-Add to your ESPHome YAML:
+## Key Features
+
+### Memory Efficient
+- Uses ESP-IDF native NimBLE (not NimBLE-Arduino)
+- Shares BLE stack with nimble_proxy component
+- No Bluedroid overhead
+
+### ESPHome Integration
+- Uses ESPHome WiFi component for connection
+- Integrates with optional binary output for status indicator
+- Authorization timeout management
+- Configurable WiFi connection timeout
+
+### Improv Protocol Compliant
+- Follows https://www.improv-wifi.com/ specification
+- Compatible with standard Improv clients:
+  - Improv WiFi web app
+  - Mobile apps supporting Improv
+  - Chrome browser with Web Bluetooth API
+
+## Configuration
 
 ```yaml
-external_components:
-  - source: github://truffshuff/esphome-components
-    components: [nimble_improv]
-    refresh: always
-```
+# Ensure nimble_proxy is loaded first to initialize NimBLE stack
+nimble_proxy:
+  active: true
+  max_connections: 3
 
-### Basic Configuration
-
-```yaml
+# Full featured nimble_improv with local implementation
 nimble_improv:
+  authorized_duration: 2min  # How long authorization lasts
+  wifi_timeout: 1min         # Timeout for WiFi connection attempts
+  # Optional: status_indicator for IDENTIFY command
+  # Optional: authorizer for manual authorization control
 ```
 
-### Full Configuration
+## Dependencies
 
-```yaml
-nimble_improv:
-  authorizer: button_authorize  # Optional: button that must be pressed to authorize
-  authorized_duration: 1min     # How long authorization lasts
-  status_indicator: led_status  # Optional: LED for visual feedback
-  identify_duration: 10s        # How long identify LED stays on
-  wifi_timeout: 1min            # Timeout for WiFi connection attempts
-```
+**Required:**
+- `nimble_proxy` component (must be loaded first)
+- ESP32 with ESP-IDF framework
+- NimBLE enabled in sdkconfig
 
-## Usage
+**Compatible With:**
+- ESPHome WiFi component
+- bluetooth_proxy stub (for API message types)
 
-### 1. Flash Device
+## Implementation Details
 
-Flash your device with ESPHome configuration including `nimble_improv`.
+### Service Registration Flow
+1. Check if NimBLE host is initialized (via `ble_hs_is_enabled()`)
+2. Call `ble_gatts_count_cfg()` to count service definitions
+3. Call `ble_gatts_add_svcs()` to register services
+4. Find characteristic handles via `ble_gatts_find_chr()`
+5. Start BLE advertising with Improv UUID
 
-### 2. Use Improv WiFi App
+### State Machine
+- **STOPPED**: Service not running
+- **AWAITING_AUTHORIZATION**: Connected, waiting for authorization
+- **AUTHORIZED**: Ready to receive WiFi credentials
+- **PROVISIONING**: Attempting WiFi connection
+- **PROVISIONED**: WiFi connected successfully
 
-Download an Improv-compatible app:
-- **Android**: [Improv WiFi](https://play.google.com/store/apps/details?id=com.improvwifi)
-- **iOS**: [Improv WiFi](https://apps.apple.com/app/improv-wifi/id123456789)
-- **Web**: [https://www.improv-wifi.com/](https://www.improv-wifi.com/)
+### Error Handling
+- **ERROR_NONE**: No error
+- **ERROR_INVALID_RPC**: Malformed command data
+- **ERROR_UNKNOWN_RPC**: Unrecognized command
+- **ERROR_UNABLE_TO_CONNECT**: WiFi connection failed/timeout
+- **ERROR_NOT_AUTHORIZED**: Command received before authorization
+- **ERROR_UNKNOWN**: Unexpected error
 
-### 3. Provision WiFi
+## Testing
 
-1. Open the Improv app
-2. Scan for BLE devices
-3. Connect to "Halo-Improv"
-4. Enter your WiFi SSID and password
-5. Device will connect to the new network
+Use any Improv-compatible client:
 
-## Configuration Options
+1. **Web Browser** (Chrome/Edge):
+   - Visit https://www.improv-wifi.com/
+   - Click "Connect device via Improv"
+   - Select "Halo Improv" from BLE device list
+   - Enter WiFi credentials
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `authorizer` | Binary Output | None | Optional button that must be pressed to authorize provisioning |
-| `authorized_duration` | Time | 1min | How long authorization lasts after button press |
-| `status_indicator` | Binary Output | None | Optional LED for visual feedback during identification |
-| `identify_duration` | Time | 10s | How long the identify LED stays on |
-| `wifi_timeout` | Time | 1min | Maximum time to wait for WiFi connection |
+2. **nRF Connect** (for debugging):
+   - Scan for "Halo Improv"
+   - Connect and explore GATT services
+   - Find service UUID ending in `...268000`
+   - Write to RPC Command characteristic
 
-## Example: With Authorization Button
+3. **ESPHome Logs**:
+   - Watch for "NimBLE Improv" messages
+   - Connection events logged with handle IDs
+   - State transitions and command processing visible
 
-```yaml
-binary_sensor:
-  - platform: gpio
-    pin:
-      number: GPIO0
-      mode: INPUT_PULLUP
-      inverted: true
-    id: button_provision
-    on_press:
-      - output.turn_on: authorize_improv
+## Differences from Upstream Stub
 
-output:
-  - platform: gpio
-    pin: GPIO2
-    id: led_status
+| Feature | Upstream | This Implementation |
+|---------|----------|---------------------|
+| GATT Service | TODO comment | ✅ Fully registered |
+| Characteristics | Not registered | ✅ All 5 registered |
+| Access Callbacks | Stub return 0 | ✅ Full read/write handling |
+| GAP Events | Stub, no logic | ✅ Connection management |
+| Advertising | Not started | ✅ Full advertising with UUID |
+| Command Processing | Partially implemented | ✅ 3 commands working |
+| Response Sending | TODO comment | ✅ Notifications sent |
+| Device Info | TODO | ✅ Returns firmware/version/hardware |
 
-  - platform: template
-    id: authorize_improv
-    type: binary
-    write_action:
-      - logger.log: "Improv authorization granted"
+## Future Enhancements
 
-nimble_improv:
-  authorizer: authorize_improv
-  status_indicator: led_status
-  authorized_duration: 2min
-```
-
-## Compatibility
-
-### Required Hardware
-- ESP32-S3 (or ESP32 with NimBLE support)
-- ESPHome 2024.11.0 or later
-- ESP-IDF framework
-
-### Works With
-- ✅ `nimble_proxy` - Can run simultaneously
-- ✅ `bluetooth_proxy` (stub version for API compatibility)
-- ✅ `wifi` component
-- ⚠️ `esp32_ble_tracker` - Not compatible (use NimBLE alternatives)
-
-### Does NOT Work With
-- ❌ `esp32_improv` - Cannot use both (different BT stacks)
-- ❌ Bluedroid-based components
-
-## Technical Details
-
-### Memory Usage
-- **RAM**: ~120KB (vs ~220KB for Bluedroid-based `esp32_improv`)
-- **Flash**: ~180KB
-
-### BLE Service UUID
-- Service: `00467768-6228-2272-4663-277478268000`
-- Follows standard Improv WiFi specification
-
-### Thread Safety
-- Component uses NimBLE's thread-safe APIs
-- Safe to use with WiFi component
-- Compatible with LVGL UI operations
-
-## Troubleshooting
-
-### Device Not Visible in Improv App
-
-1. Ensure NimBLE is enabled in ESP-IDF config:
-   ```yaml
-   esp32:
-     framework:
-       type: esp-idf
-       sdkconfig_options:
-         CONFIG_BT_NIMBLE_ENABLED: "y"
-         CONFIG_BT_BLUEDROID_ENABLED: "n"
-   ```
-
-2. Check logs for advertising status:
-   ```
-   [I][nimble_improv:025]: NimBLE Improv service started
-   ```
-
-### Authorization Failed
-
-- If using `authorizer`, ensure the button is pressed within the connection window
-- Check `authorized_duration` - increase if needed
-- Try without `authorizer` first (auto-authorizes)
-
-### WiFi Connection Fails
-
-- Verify SSID and password are correct
-- Increase `wifi_timeout` if network is slow
-- Check WiFi signal strength
-- Ensure WiFi component is properly configured
-
-## Contributing
-
-Found a bug or have a feature request? Please open an issue on GitHub:
-https://github.com/truffshuff/esphome-components/issues
-
-## License
-
-MIT License - See LICENSE file for details
+- [ ] WiFi network scanning (GET_WIFI_NETWORKS command)
+- [ ] Save credentials to flash memory
+- [ ] Auto-disable after successful provisioning (optional)
+- [ ] Identify timer (turn off status after identify_duration)
+- [ ] Support for authorization via binary sensor trigger
 
 ## Credits
 
-- Based on ESPHome's `esp32_improv` component
-- Uses [Improv WiFi Protocol](https://www.improv-wifi.com/)
-- Built with [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)
+Based on the stub implementation from https://github.com/truffshuff/esphome-components
+
+Completed implementation following the pattern of nimble_proxy component.
+
+Improv WiFi protocol: https://www.improv-wifi.com/
+
+## License
+
+Same as ESPHome (MIT License)
