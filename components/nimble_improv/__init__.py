@@ -5,12 +5,9 @@ Uses NimBLE stack instead of Bluedroid for memory efficiency
 """
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import esp32
+from esphome.components import esp32, output
 from esphome.const import (
     CONF_ID,
-    CONF_AUTHORIZED_DURATION,
-    CONF_IDENTIFY_DURATION,
-    CONF_STATUS_INDICATOR,
 )
 from esphome.core import CORE, coroutine_with_priority
 
@@ -18,7 +15,11 @@ DEPENDENCIES = ["esp32", "wifi"]
 AUTO_LOAD = ["output"]
 CODEOWNERS = ["@truffshuff"]
 
+# Define our own constants since they don't exist in esphome.const
 CONF_AUTHORIZER = "authorizer"
+CONF_AUTHORIZED_DURATION = "authorized_duration"
+CONF_IDENTIFY_DURATION = "identify_duration"
+CONF_STATUS_INDICATOR = "status_indicator"
 CONF_WIFI_TIMEOUT = "wifi_timeout"
 
 nimble_improv_ns = cg.esphome_ns.namespace("nimble_improv")
