@@ -1,7 +1,7 @@
 """
 NimBLE-based Improv WiFi Provisioning Component
 Allows WiFi reconfiguration via BLE using the Improv protocol
-Uses NimBLE stack instead of Bluedroid for memory efficiency
+Uses ESP-IDF native NimBLE stack (not NimBLE-Arduino) for memory efficiency
 """
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -49,10 +49,6 @@ async def to_code(config):
     await cg.register_component(var, config)
 
     cg.add_define("USE_NIMBLE_IMPROV")
-    
-    # Add NimBLE-Arduino library for C++ wrapper classes
-    # Note: This provides NimBLEDevice.h, NimBLEServer.h, etc.
-    cg.add_library("h2zero/NimBLE-Arduino", "1.4.2")
 
     if CONF_AUTHORIZER in config:
         activator = await cg.get_variable(config[CONF_AUTHORIZER])
@@ -68,10 +64,8 @@ async def to_code(config):
     cg.add(var.set_identify_duration(config[CONF_IDENTIFY_DURATION]))
     cg.add(var.set_wifi_timeout(config[CONF_WIFI_TIMEOUT]))
 
+    # No library dependency needed - using ESP-IDF native NimBLE
     # Ensure NimBLE is enabled in ESP-IDF config
     if CORE.using_esp_idf:
         cg.add_build_flag("-DCONFIG_BT_NIMBLE_ENABLED=1")
         cg.add_build_flag("-DCONFIG_BT_BLUEDROID_ENABLED=0")
-        # Add include path for NimBLE-Arduino with ESP-IDF
-        cg.add_build_flag("-DCONFIG_NIMBLE_CPP_ENABLE_RETURN_CODE_TEXT=1")
-        cg.add_build_flag("-DCONFIG_NIMBLE_CPP_ENABLE_GAP_EVENT_CODE_TEXT=1")

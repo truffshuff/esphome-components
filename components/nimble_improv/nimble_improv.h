@@ -1,13 +1,12 @@
 /**
- * NimBLE Improv - WiFi Provisioning via BLE using NimBLE stack
+ * NimBLE Improv - WiFi Provisioning via BLE using ESP-IDF NimBLE stack
  * 
  * This component implements the Improv WiFi provisioning protocol using
- * the NimBLE Bluetooth stack instead of Bluedroid, providing:
- * - Lower memory footprint (~100KB less RAM usage)
+ * ESP-IDF's native NimBLE Bluetooth stack (not NimBLE-Arduino), providing:
+ * - Lower memory footprint
  * - Better compatibility with nimble_proxy component
  * - Ability to provision WiFi while device is already connected
  * 
- * Based on ESPHome's esp32_improv but adapted for NimBLE stack.
  * Protocol: https://www.improv-wifi.com/
  */
 
@@ -26,21 +25,41 @@
 #include "esphome/components/output/binary_output.h"
 #endif
 
-#include <NimBLEDevice.h>
-#include <NimBLEServer.h>
-#include <NimBLECharacteristic.h>
+// ESP-IDF native NimBLE headers
+#include "esp_bt.h"
+#include "host/ble_hs.h"
+#include "host/ble_gap.h"
+#include "host/ble_gatt.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
+
 #include <vector>
 
 namespace esphome {
 namespace nimble_improv {
 
 // Improv Protocol UUIDs (standard from improv-wifi.com)
-static const char *IMPROV_SERVICE_UUID = "00467768-6228-2272-4663-277478268000";
-static const char *IMPROV_STATUS_UUID = "00467768-6228-2272-4663-277478268001";
-static const char *IMPROV_ERROR_UUID = "00467768-6228-2272-4663-277478268002";
-static const char *IMPROV_RPC_COMMAND_UUID = "00467768-6228-2272-4663-277478268003";
-static const char *IMPROV_RPC_RESULT_UUID = "00467768-6228-2272-4663-277478268004";
-static const char *IMPROV_CAPABILITIES_UUID = "00467768-6228-2272-4663-277478268005";
+// Service: 00467768-6228-2272-4663-277478268000
+static const ble_uuid128_t IMPROV_SERVICE_UUID = 
+  BLE_UUID128_INIT(0x00, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
+
+// Characteristics UUIDs
+static const ble_uuid128_t IMPROV_STATUS_UUID = 
+  BLE_UUID128_INIT(0x01, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
+
+static const ble_uuid128_t IMPROV_ERROR_UUID = 
+  BLE_UUID128_INIT(0x02, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
+
+static const ble_uuid128_t IMPROV_RPC_COMMAND_UUID = 
+  BLE_UUID128_INIT(0x03, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
+
+static const ble_uuid128_t IMPROV_RPC_RESULT_UUID = 
+  BLE_UUID128_INIT(0x04, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
+
+static const ble_uuid128_t IMPROV_CAPABILITIES_UUID = 
+  BLE_UUID128_INIT(0x05, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00);
 
 enum ImprovCommand : uint8_t {
   WIFI_SETTINGS = 0x01,
@@ -51,100 +70,79 @@ enum ImprovCommand : uint8_t {
 };
 
 enum ImprovState : uint8_t {
-  AUTHORIZATION_REQUIRED = 0x01,
-  AUTHORIZED = 0x02,
-  PROVISIONING = 0x03,
-  PROVISIONED = 0x04,
+  IMPROV_STATE_STOPPED = 0x00,
+  IMPROV_STATE_AWAITING_AUTHORIZATION = 0x01,
+  IMPROV_STATE_AUTHORIZED = 0x02,
+  IMPROV_STATE_PROVISIONING = 0x03,
+  IMPROV_STATE_PROVISIONED = 0x04,
 };
 
-enum Error : uint8_t {
-  NO_ERROR = 0x00,
-  INVALID_RPC = 0x01,
-  UNKNOWN_RPC = 0x02,
-  UNABLE_TO_CONNECT = 0x03,
-  NOT_AUTHORIZED = 0x04,
-  UNKNOWN = 0xFF,
+enum ImprovError : uint8_t {
+  ERROR_NONE = 0x00,
+  ERROR_INVALID_RPC = 0x01,
+  ERROR_UNKNOWN_RPC = 0x02,
+  ERROR_UNABLE_TO_CONNECT = 0x03,
+  ERROR_NOT_AUTHORIZED = 0x04,
+  ERROR_UNKNOWN = 0xFF,
 };
 
-class NimBLEImprov : public Component, public NimBLEServerCallbacks, public NimBLECharacteristicCallbacks {
+class NimBLEImprov : public Component {
  public:
   NimBLEImprov();
+  
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
+  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
-  // Configuration setters
+  // Configuration methods
   void set_authorizer(output::BinaryOutput *authorizer) { this->authorizer_ = authorizer; }
-  void set_status_indicator(output::BinaryOutput *status_indicator) { this->status_indicator_ = status_indicator; }
   void set_authorized_duration(uint32_t duration) { this->authorized_duration_ = duration; }
+  void set_status_indicator(output::BinaryOutput *status_indicator) { this->status_indicator_ = status_indicator; }
   void set_identify_duration(uint32_t duration) { this->identify_duration_ = duration; }
   void set_wifi_timeout(uint32_t timeout) { this->wifi_timeout_ = timeout; }
 
-  // NimBLE Server Callbacks
-  void onConnect(NimBLEServer *server) override;
-  void onDisconnect(NimBLEServer *server) override;
-
-  // NimBLE Characteristic Callbacks
-  void onWrite(NimBLECharacteristic *characteristic) override;
+  // NimBLE callback handlers
+  static int characteristic_access_callback(uint16_t conn_handle, uint16_t attr_handle,
+                                           struct ble_gatt_access_ctxt *ctxt, void *arg);
+  static void gap_event_handler(struct ble_gap_event *event, void *arg);
 
  protected:
-  void setup_service_();
+  void start_service_();
+  void stop_service_();
   void set_state_(ImprovState state);
-  void set_error_(Error error);
-  void send_response_(std::vector<uint8_t> &response);
-  void process_command_(const uint8_t *data, size_t length);
-  
-  // Command handlers
-  void handle_wifi_settings_(const std::vector<std::string> &strings);
-  void handle_identify_();
-  void handle_get_current_state_();
-  void handle_get_device_info_();
-  void handle_get_wifi_networks_();
-
-  // Authorization
-  bool check_authorization_();
-  void start_authorization_();
-
-  // WiFi helpers
+  void set_error_(ImprovError error);
+  void process_command_(const std::vector<uint8_t> &data);
   void start_wifi_connect_(const std::string &ssid, const std::string &password);
   void check_wifi_connection_();
+  void send_response_(const std::vector<uint8_t> &data);
 
-  // NimBLE objects
-  NimBLEServer *server_{nullptr};
-  NimBLEService *service_{nullptr};
-  NimBLECharacteristic *status_char_{nullptr};
-  NimBLECharacteristic *error_char_{nullptr};
-  NimBLECharacteristic *rpc_command_char_{nullptr};
-  NimBLECharacteristic *rpc_result_char_{nullptr};
-  NimBLECharacteristic *capabilities_char_{nullptr};
-
-  // State
-  ImprovState state_{ImprovState::AUTHORIZATION_REQUIRED};
-  Error error_state_{Error::NO_ERROR};
-  bool service_running_{false};
-  bool client_connected_{false};
-
-  // WiFi provisioning state
-  std::string pending_ssid_;
-  std::string pending_password_;
-  uint32_t wifi_connect_start_{0};
-  bool wifi_connecting_{false};
-
-  // Authorization
-  output::BinaryOutput *authorizer_{nullptr};
-  uint32_t authorized_start_{0};
-  uint32_t authorized_duration_{60000};  // 1 minute default
+  // State management
+  ImprovState state_{IMPROV_STATE_STOPPED};
+  ImprovError error_{ERROR_NONE};
   bool authorized_{false};
-
-  // Identification
+  uint32_t authorized_start_{0};
+  uint32_t wifi_connect_start_{0};
+  
+  // Configuration
+  output::BinaryOutput *authorizer_{nullptr};
+  uint32_t authorized_duration_{60000};  // 1 minute default
   output::BinaryOutput *status_indicator_{nullptr};
-  uint32_t identify_start_{0};
   uint32_t identify_duration_{10000};  // 10 seconds default
-  bool identifying_{false};
-
-  // Timeouts
   uint32_t wifi_timeout_{60000};  // 1 minute default
+  
+  // BLE handles
+  uint16_t conn_handle_{BLE_HS_CONN_HANDLE_NONE};
+  uint16_t status_handle_;
+  uint16_t error_handle_;
+  uint16_t rpc_command_handle_;
+  uint16_t rpc_result_handle_;
+  uint16_t capabilities_handle_;
+  
+  // WiFi provisioning state
+  std::string incoming_ssid_;
+  std::string incoming_password_;
+  bool wifi_connect_running_{false};
 };
 
 }  // namespace nimble_improv
