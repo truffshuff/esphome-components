@@ -11,9 +11,9 @@ static const char *const TAG = "nimble_improv";
 // Global instance pointer for NimBLE callbacks
 static NimBLEImprov *global_nimble_improv = nullptr;
 
-// Forward declarations for characteristic access
-static int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                             struct ble_gatt_access_ctxt *ctxt, void *arg);
+// Forward declaration for characteristic access (non-static, matches friend declaration)
+int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                      struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 // GATT service definition
 static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
@@ -405,9 +405,9 @@ void NimBLEImprov::send_response_(const std::vector<uint8_t> &data) {
   }
 }
 
-// NimBLE GATT characteristic access callback
-static int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                             struct ble_gatt_access_ctxt *ctxt, void *arg) {
+// NimBLE GATT characteristic access callback (non-static, declared as friend)
+int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                      struct ble_gatt_access_ctxt *ctxt, void *arg) {
   if (global_nimble_improv == nullptr) {
     return BLE_ATT_ERR_UNLIKELY;
   }
