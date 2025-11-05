@@ -364,8 +364,14 @@ void NimBLEImprov::check_wifi_connection_() {
     this->wifi_connect_running_ = false;
 
     // Send success response with redirect URL (IP address)
-    auto ip = wifi::global_wifi_component->get_ip_address();
-    std::string redirect_url = "http://" + ip.str() + "/";
+    auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
+    std::string redirect_url = "http://";
+    if (!ip_addresses.empty()) {
+      redirect_url += ip_addresses[0].str();
+    } else {
+      redirect_url += "192.168.1.1";  // Fallback
+    }
+    redirect_url += "/";
 
     std::vector<uint8_t> response;
     response.push_back(WIFI_SETTINGS);
@@ -412,7 +418,7 @@ static int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   if (ble_uuid_cmp(uuid, &IMPROV_STATUS_UUID.u) == 0) {
     // Status characteristic (read)
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      uint8_t state = global_nimble_improv->state_;
+      uint8_t state = static_cast<uint8_t>(global_nimble_improv->state_);
       int rc = os_mbuf_append(ctxt->om, &state, sizeof(state));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
@@ -420,7 +426,7 @@ static int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   else if (ble_uuid_cmp(uuid, &IMPROV_ERROR_UUID.u) == 0) {
     // Error characteristic (read)
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      uint8_t error = global_nimble_improv->error_;
+      uint8_t error = static_cast<uint8_t>(global_nimble_improv->error_);
       int rc = os_mbuf_append(ctxt->om, &error, sizeof(error));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
