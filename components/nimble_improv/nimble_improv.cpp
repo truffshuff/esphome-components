@@ -168,9 +168,13 @@ void NimBLEImprov::start_wifi_connect_(const std::string &ssid, const std::strin
   
   ESP_LOGI(TAG, "Attempting to connect to WiFi: %s", ssid.c_str());
   
-  // Get the global WiFi component and configure new credentials
-  wifi::global_wifi_component->set_sta(wifi::WiFiAP(ssid, password));
-  wifi::global_wifi_component->start_connecting();
+  // Create WiFiAP struct properly
+  wifi::WiFiAP sta_ap;
+  sta_ap.set_ssid(ssid);
+  sta_ap.set_password(password);
+  
+  // Use the correct WiFi API - start_connecting expects WiFiAP and bool
+  wifi::global_wifi_component->start_connecting(sta_ap, false);
 }
 
 void NimBLEImprov::check_wifi_connection_() {
