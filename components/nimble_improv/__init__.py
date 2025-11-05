@@ -50,8 +50,9 @@ async def to_code(config):
 
     cg.add_define("USE_NIMBLE_IMPROV")
     
-    # Add NimBLE dependencies
-    cg.add_library("h2zero/NimBLE-Arduino", "1.4.1")
+    # Add NimBLE-Arduino library for C++ wrapper classes
+    # Note: This provides NimBLEDevice.h, NimBLEServer.h, etc.
+    cg.add_library("h2zero/NimBLE-Arduino", "1.4.2")
 
     if CONF_AUTHORIZER in config:
         activator = await cg.get_variable(config[CONF_AUTHORIZER])
@@ -71,3 +72,6 @@ async def to_code(config):
     if CORE.using_esp_idf:
         cg.add_build_flag("-DCONFIG_BT_NIMBLE_ENABLED=1")
         cg.add_build_flag("-DCONFIG_BT_BLUEDROID_ENABLED=0")
+        # Add include path for NimBLE-Arduino with ESP-IDF
+        cg.add_build_flag("-DCONFIG_NIMBLE_CPP_ENABLE_RETURN_CODE_TEXT=1")
+        cg.add_build_flag("-DCONFIG_NIMBLE_CPP_ENABLE_GAP_EVENT_CODE_TEXT=1")
