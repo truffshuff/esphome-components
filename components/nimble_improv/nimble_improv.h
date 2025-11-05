@@ -89,6 +89,9 @@ enum ImprovError : uint8_t {
 class NimBLEImprov : public Component {
  public:
   NimBLEImprov();
+
+  // Friend declaration for callback function to access protected members
+  friend int improv_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
   
   void setup() override;
   void loop() override;
@@ -106,6 +109,10 @@ class NimBLEImprov : public Component {
   static int characteristic_access_callback(uint16_t conn_handle, uint16_t attr_handle,
                                            struct ble_gatt_access_ctxt *ctxt, void *arg);
   static int gap_event_handler(struct ble_gap_event *event, void *arg);
+
+  // Accessors for callback functions (public so static callbacks can access)
+  ImprovState get_state() const { return this->state_; }
+  ImprovError get_error() const { return this->error_; }
 
  protected:
   void start_service_();
