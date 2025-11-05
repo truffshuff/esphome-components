@@ -72,3 +72,11 @@ async def to_code(config):
         cg.add_build_flag("-DCONFIG_BLUEDROID_ENABLED=0")
         cg.add_build_flag("-DCONFIG_BT_CLASSIC_ENABLED=0")
         cg.add_build_flag("-DCONFIG_BT_BLE_ENABLED=0")
+
+        # Disable Bluedroid sub-components that cause esp_bt_defs.h errors
+        cg.add_build_flag("-DCONFIG_BT_BLUFI_ENABLE=0")
+        cg.add_build_flag("-DCONFIG_BT_SPP_ENABLED=0")
+        cg.add_build_flag("-DCONFIG_BT_HFP_ENABLE=0")
+        cg.add_build_flag("-DCONFIG_BT_A2DP_ENABLE=0")
+        cg.add_build_flag("-DCONFIG_BT_GATTS_ENABLE=0")
+        cg.add_build_flag("-DCONFIG_BT_GATTC_ENABLE=0")
