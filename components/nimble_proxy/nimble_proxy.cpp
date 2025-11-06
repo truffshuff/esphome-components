@@ -296,6 +296,24 @@ void NimBLEProxy::start_advertising_() {
     snprintf(device_name, sizeof(device_name), "%s", name_base.c_str());
   }
 
+  // If we have service UUIDs, include them in MAIN advertising packet
+  // This requires shortening the name to fit in 31 bytes
+  static ble_uuid128_t uuid_storage[1];
+  if (!advertising_service_uuids.empty()) {
+    // Flags(3) + Name(~10) + UUID(18) = ~31 bytes
+    // Shorten name to "Halo-XXX" (8 chars) to ensure it fits
+    if (strlen(device_name) > 8) {
+      device_name[8] = '\0';
+    }
+
+    uuid_storage[0] = *advertising_service_uuids[0];
+    fields.uuids128 = uuid_storage;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1;
+
+    ESP_LOGI(TAG, "Including Improv UUID in main advertisement (name shortened to '%s')", device_name);
+  }
+
   fields.name = (uint8_t *) device_name;
   fields.name_len = strlen(device_name);
   fields.name_is_complete = 1;
@@ -304,34 +322,6 @@ void NimBLEProxy::start_advertising_() {
   if (rc != 0) {
     ESP_LOGE(TAG, "Error setting advertising fields: %d", rc);
     return;
-  }
-
-  // Put 128-bit service UUIDs in scan response data to avoid exceeding 31-byte limit
-  // Main adv data: flags (3) + name (15) = 18 bytes ✓
-  // Scan response: UUID (18 bytes for one 128-bit UUID) ✓
-  if (!advertising_service_uuids.empty()) {
-    memset(&rsp_fields, 0, sizeof(rsp_fields));
-
-    // IMPORTANT: We can't point directly to the vector of pointers - NimBLE expects
-    // a contiguous array of ble_uuid128_t structs. But we also can't use stack allocation
-    // because the data needs to persist. Use static storage.
-    static ble_uuid128_t uuid_storage[10];  // Max 10 service UUIDs should be plenty
-
-    size_t num_uuids = std::min(advertising_service_uuids.size(), (size_t)10);
-    for (size_t i = 0; i < num_uuids; i++) {
-      uuid_storage[i] = *advertising_service_uuids[i];
-    }
-
-    rsp_fields.uuids128 = uuid_storage;
-    rsp_fields.num_uuids128 = num_uuids;
-    rsp_fields.uuids128_is_complete = 1;
-
-    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
-    if (rc != 0) {
-      ESP_LOGE(TAG, "Error setting scan response fields: %d", rc);
-      return;
-    }
-    ESP_LOGI(TAG, "Added %d 128-bit service UUID(s) to scan response", num_uuids);
   }
 
   // Start advertising
