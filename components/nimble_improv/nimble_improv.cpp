@@ -114,6 +114,16 @@ NimBLEImprov::NimBLEImprov() {
   nimble_proxy::NimBLEProxy::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
 }
 
+// Length-prefixed string reader used by process_command_
+static bool read_lp_str_(const std::vector<uint8_t> &in, size_t &idx, std::string &out) {
+  if (idx >= in.size()) return false;
+  uint8_t len = in[idx++];
+  if (idx + len > in.size()) return false;
+  out.assign(reinterpret_cast<const char *>(&in[idx]), len);
+  idx += len;
+  return true;
+}
+
 void NimBLEImprov::setup() {
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
   ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
@@ -240,18 +250,17 @@ void NimBLEImprov::stop_service_() {
   this->set_state_(IMPROV_STATE_STOPPED);
 }
 
+// Also notify Status when it changes
 void NimBLEImprov::set_state_(ImprovState state) {
-  if (this->state_ == state)
-    return;
-
+  if (this->state_ == state) return;
   this->state_ = state;
   ESP_LOGD(TAG, "State changed to: %d", state);
-
-  // Notify status characteristic if we have a connection
-  if (this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE) {
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(&state, sizeof(state));
-    if (om != nullptr) {
-      ble_gatts_notify_custom(this->conn_handle_, this->status_handle_, om);
+  if (this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->status_handle_ != 0) {
+    uint8_t val = static_cast<uint8_t>(this->state_);
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
+    if (om) {
+      int rc = ble_gatts_notify_custom(this->conn_handle_, this->status_handle_, om);
+      if (rc != 0) ESP_LOGW(TAG, "Failed to notify status: %d", rc);
     }
   }
 }
@@ -456,6 +465,27 @@ void NimBLEImprov::send_response_(const std::vector<uint8_t> &data) {
   }
 }
 
+// Optional: helper to send device info result (4 LP strings)
+void NimBLEImprov::send_device_info_result_() {
+  std::vector<uint8_t> payload;
+
+  auto push_lp = [&](const std::string &s) {
+    payload.push_back(static_cast<uint8_t>(std::min<size_t>(255, s.size())));
+    payload.insert(payload.end(), s.begin(), s.begin() + std::min<size_t>(255, s.size()));
+  };
+
+  std::string name = App.get_name();
+  std::string fw   = App.get_compilation_time(); // or your version string
+  std::string hw   = "ESP32-S3";
+  std::string addr = ""; // leave empty here; IP will be returned after WiFi connect via RPC Result
+
+  push_lp(name);
+  push_lp(fw);
+  push_lp(hw);
+  push_lp(addr);
+
+  this->send_response_(payload);
+}
 // NimBLE GATT characteristic access callback (non-static, declared as friend)
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                       struct ble_gatt_access_ctxt *ctxt, void *arg) {
@@ -472,6 +502,11 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     if (global_nimble_improv->authorizer_ == nullptr) {
       global_nimble_improv->authorized_ = true;
       global_nimble_improv->authorized_start_ = millis();
+
+      // Clear any previous error before entering AUTHORIZED
+      global_nimble_improv->set_error_(IMPROV_ERROR_NONE);   // or ImprovError::NONE if using enum class
+
+      // Move to AUTHORIZED (this should notify status if your set_state_ does)
       global_nimble_improv->set_state_(IMPROV_STATE_AUTHORIZED);
       ESP_LOGI(TAG, "Auto-authorized (no authorizer configured)");
     }
