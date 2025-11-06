@@ -281,30 +281,44 @@ void NimBLEProxy::start_advertising_() {
   memset(&fields, 0, sizeof(fields));
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-  // Build device name: "Halo-XXXXXX" where XXXXXX is last 6 hex digits of MAC
+  // Build device name with MAC address for unique identification
   // IMPORTANT: Use static storage so the pointer remains valid after function returns
   static char device_name[32];
   std::string name_base = App.get_name();
 
-  // Get last 6 chars of MAC address
+  // Get last 3 bytes (6 hex chars) of MAC address
   uint8_t addr[6];
   int rc_addr = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr, nullptr);
-  if (rc_addr == 0) {
+
+  // If we have service UUIDs (like Improv), we need a shorter name to fit in 31 bytes
+  // Flags(3) + Name(~13) + UUID128(18) = ~34 bytes (exceeds 31 byte limit)
+  // So we use a shortened base name with MAC to stay under limit
+  static ble_uuid128_t uuid_storage[1];
+  if (!advertising_service_uuids.empty() && rc_addr == 0) {
+    // Use shortened name: "halo-ABC123" (12 chars max including MAC)
+    // Extract just "halo" from full device name (strip version suffix if present)
+    std::string short_name = name_base;
+    size_t dash_pos = short_name.find('-');
+    if (dash_pos != std::string::npos) {
+      short_name = short_name.substr(0, dash_pos);  // Keep only "halo" part
+    }
+    // Limit base name to 5 chars to ensure "base-XXYYZZ" fits in 12 chars
+    if (short_name.length() > 5) {
+      short_name = short_name.substr(0, 5);
+    }
+    snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
+             short_name.c_str(), addr[3], addr[4], addr[5]);
+  } else if (rc_addr == 0) {
+    // No service UUIDs, use full name with MAC
     snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
              name_base.c_str(), addr[3], addr[4], addr[5]);
   } else {
+    // Fallback if MAC address not available
     snprintf(device_name, sizeof(device_name), "%s", name_base.c_str());
   }
 
   // If we have service UUIDs, include them in MAIN advertising packet
-  // This requires shortening the name to fit in 31 bytes
-  static ble_uuid128_t uuid_storage[1];
   if (!advertising_service_uuids.empty()) {
-    // Flags(3) + Name(~10) + UUID(18) = ~31 bytes
-    // Shorten name to "Halo-XXX" (8 chars) to ensure it fits
-    if (strlen(device_name) > 8) {
-      device_name[8] = '\0';
-    }
 
     uuid_storage[0] = *advertising_service_uuids[0];
     fields.uuids128 = uuid_storage;
