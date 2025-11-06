@@ -81,20 +81,15 @@ void NimBLEImprov::loop() {
   if (!this->service_started_ && ble_hs_synced()) {
     ESP_LOGI(TAG, "NimBLE host synced, registering Improv GATT services");
 
-    // Register GATT services
-    int rc = ble_gatts_count_cfg(improv_gatt_svcs);
+    // Register GATT services at runtime using ble_gatts_register_svcs()
+    // This works after the host has started, unlike ble_gatts_add_svcs()
+    int rc = ble_gatts_register_svcs(improv_gatt_svcs, nullptr, nullptr);
     if (rc != 0) {
-      ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", rc);
+      ESP_LOGE(TAG, "ble_gatts_register_svcs failed: %d", rc);
       return;
     }
 
-    rc = ble_gatts_add_svcs(improv_gatt_svcs);
-    if (rc != 0) {
-      ESP_LOGE(TAG, "ble_gatts_add_svcs failed: %d", rc);
-      return;
-    }
-
-    ESP_LOGI(TAG, "GATT services registered successfully");
+    ESP_LOGI(TAG, "GATT services registered successfully via ble_gatts_register_svcs()");
 
     // Get characteristic value handles
     rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
