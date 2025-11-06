@@ -142,8 +142,8 @@ void NimBLEImprov::setup() {
 }
 
 float NimBLEImprov::get_setup_priority() const {
-  // Ensure we load/apply saved WiFi creds before WiFi component starts
-  return esphome::setup_priority::WIFI - 1.0f;
+  // Run before the WiFi component initializes
+  return esphome::setup_priority::WIFI + 1.0f;
 }
 
 // Persist credentials to NVS
@@ -155,7 +155,7 @@ void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string 
   bool ok = this->pref_creds_.save(&rec);
   ESP_LOGI(TAG, "Saved WiFi credentials to NVS: %s", ok ? "OK" : "FAIL");
 
-  // Also update the WiFi networks list immediately
+  // Replace STA list immediately so reconnection prefers the new network
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);
@@ -175,7 +175,7 @@ void NimBLEImprov::load_saved_credentials_() {
     return;
   }
 
-  // Overwrite the WiFi networks list so YAML entries don’t take precedence
+  // Overwrite STA list before WiFi setup runs
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);
@@ -183,7 +183,6 @@ void NimBLEImprov::load_saved_credentials_() {
   wifi::global_wifi_component->set_sta(nets);
 
   ESP_LOGI(TAG, "Loaded saved WiFi credentials for SSID '%s' from NVS", rec.ssid);
-  // Let WiFi component connect using its normal flow (now with our list)
 }
 
 void NimBLEImprov::loop() {
