@@ -145,8 +145,12 @@ void NimBLEImprov::setup() {
 }
 
 float NimBLEImprov::get_setup_priority() const {
-  // Run before WiFi initializes (WiFi is ~200)
-  return 150.0f;
+  // Run before WiFi initializes
+  // WiFi component runs at setup::SETUP_PRIORITY_WIFI (250.0f)
+  // We need to run BEFORE that, so use a LOWER number
+  // setup::SETUP_PRIORITY_DATA (600.0f) runs early for data components
+  // Use 600.0f to ensure we load NVS credentials before WiFi connects
+  return 600.0f;
 }
 
 // Persist credentials to NVS
