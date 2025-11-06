@@ -72,52 +72,51 @@ NimBLEImprov::NimBLEImprov() {
 
 void NimBLEImprov::setup() {
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
-
-  // Register GATT services immediately (before NimBLE host starts)
-  // This must happen during setup, not later
-  int rc = ble_gatts_count_cfg(improv_gatt_svcs);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", rc);
-    return;
-  }
-
-  rc = ble_gatts_add_svcs(improv_gatt_svcs);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gatts_add_svcs failed: %d - services must be registered before nimble_proxy starts", rc);
-    ESP_LOGE(TAG, "Make sure nimble_improv has higher setup priority than nimble_proxy");
-    return;
-  }
-
-  ESP_LOGI(TAG, "GATT services registered successfully");
-
-  // Get characteristic value handles for later use
-  rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
-                          nullptr, &this->status_handle_);
-  if (rc == 0) {
-    ESP_LOGD(TAG, "Status characteristic handle: %d", this->status_handle_);
-  }
-
-  rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_ERROR_UUID.u,
-                          nullptr, &this->error_handle_);
-  if (rc == 0) {
-    ESP_LOGD(TAG, "Error characteristic handle: %d", this->error_handle_);
-  }
-
-  rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_RPC_RESULT_UUID.u,
-                          nullptr, &this->rpc_result_handle_);
-  if (rc == 0) {
-    ESP_LOGD(TAG, "RPC Result characteristic handle: %d", this->rpc_result_handle_);
-  }
-
-  // Advertising will be started in loop() once NimBLE is ready
+  ESP_LOGI(TAG, "Waiting for NimBLE stack initialization by nimble_proxy");
   this->set_state_(IMPROV_STATE_STOPPED);
-  ESP_LOGI(TAG, "Waiting for NimBLE host to sync before starting advertising");
 }
 
 void NimBLEImprov::loop() {
-  // Start advertising once NimBLE is synced (one-time check)
+  // Register services and start advertising once NimBLE is synced (one-time check)
   if (!this->service_started_ && ble_hs_synced()) {
-    ESP_LOGI(TAG, "NimBLE host synced, starting Improv advertising");
+    ESP_LOGI(TAG, "NimBLE host synced, registering Improv GATT services");
+
+    // Register GATT services
+    int rc = ble_gatts_count_cfg(improv_gatt_svcs);
+    if (rc != 0) {
+      ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", rc);
+      return;
+    }
+
+    rc = ble_gatts_add_svcs(improv_gatt_svcs);
+    if (rc != 0) {
+      ESP_LOGE(TAG, "ble_gatts_add_svcs failed: %d", rc);
+      return;
+    }
+
+    ESP_LOGI(TAG, "GATT services registered successfully");
+
+    // Get characteristic value handles
+    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
+                            nullptr, &this->status_handle_);
+    if (rc == 0) {
+      ESP_LOGD(TAG, "Status characteristic handle: %d", this->status_handle_);
+    }
+
+    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_ERROR_UUID.u,
+                            nullptr, &this->error_handle_);
+    if (rc == 0) {
+      ESP_LOGD(TAG, "Error characteristic handle: %d", this->error_handle_);
+    }
+
+    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_RPC_RESULT_UUID.u,
+                            nullptr, &this->rpc_result_handle_);
+    if (rc == 0) {
+      ESP_LOGD(TAG, "RPC Result characteristic handle: %d", this->rpc_result_handle_);
+    }
+
+    // Start advertising
+    ESP_LOGI(TAG, "Starting Improv advertising");
     this->start_advertising_();
     this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
     this->service_started_ = true;
