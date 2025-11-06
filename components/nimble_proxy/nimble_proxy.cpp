@@ -24,6 +24,7 @@
 #include "esphome/core/application.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_mac.h"
 #include "nvs_flash.h"
 #include <cstring>
 
