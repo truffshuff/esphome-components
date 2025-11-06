@@ -1,4 +1,5 @@
 #include "nimble_proxy.h"
+#include "esphome/components/nimble_base/nimble_base.h"
 
 // Undefine NimBLE macros that conflict with ESPHome API enums
 #ifdef LOG_LEVEL_NONE
@@ -44,9 +45,10 @@ static const char *const TAG = "nimble_proxy";
 // Static pointer for callbacks
 static NimBLEProxy *global_nimble_proxy = nullptr;
 
+// COMMENTED OUT: Moved to nimble_base component
 // Static storage for additional GATT services registered by other components
-static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
-static std::vector<const ble_uuid128_t *> advertising_service_uuids;
+// static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
+// static std::vector<const ble_uuid128_t *> advertising_service_uuids;
 
 }  // namespace nimble_proxy
 
@@ -59,20 +61,21 @@ namespace bluetooth_proxy {
 
 namespace nimble_proxy {
 
+// COMMENTED OUT: Moved to nimble_base component
 // Static methods for external service registration
-void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services) {
-  additional_gatt_services.push_back(services);
-  ESP_LOGI(TAG, "Registered additional GATT services (%d total)", additional_gatt_services.size());
-}
+// void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services) {
+//   additional_gatt_services.push_back(services);
+//   ESP_LOGI(TAG, "Registered additional GATT services (%d total)", additional_gatt_services.size());
+// }
 
-std::vector<const struct ble_gatt_svc_def *> &NimBLEProxy::get_additional_services() {
-  return additional_gatt_services;
-}
+// std::vector<const struct ble_gatt_svc_def *> &NimBLEProxy::get_additional_services() {
+//   return additional_gatt_services;
+// }
 
-void NimBLEProxy::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
-  advertising_service_uuids.push_back(uuid);
-  ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", advertising_service_uuids.size());
-}
+// void NimBLEProxy::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
+//   advertising_service_uuids.push_back(uuid);
+//   ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", advertising_service_uuids.size());
+// }
 
 void NimBLEProxy::setup() {
   ESP_LOGI(TAG, "NimBLEProxy::setup() called on instance %p", this);
@@ -97,75 +100,79 @@ void NimBLEProxy::setup() {
 
   ESP_LOGI(TAG, "Setting up NimBLE Proxy...");
 
-  // Ensure NVS is initialized (required by Bluetooth stack)
-  esp_err_t nvs_ret = nvs_flash_init();
-  if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_LOGW(TAG, "NVS init returned %s, erasing NVS...", esp_err_to_name(nvs_ret));
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    nvs_ret = nvs_flash_init();
-  }
-  if (nvs_ret != ESP_OK) {
-    ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_ret));
-    return;
-  }
+  // COMMENTED OUT: NimBLE initialization now handled by nimble_base component
+  // The nimble_base component must be included in the YAML configuration
+  // and will run first due to setup priority (AFTER_BLUETOOTH)
 
-  // Release Classic BT memory (ignore error if already released)
-  (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+  // // Ensure NVS is initialized (required by Bluetooth stack)
+  // esp_err_t nvs_ret = nvs_flash_init();
+  // if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+  //   ESP_LOGW(TAG, "NVS init returned %s, erasing NVS...", esp_err_to_name(nvs_ret));
+  //   ESP_ERROR_CHECK(nvs_flash_erase());
+  //   nvs_ret = nvs_flash_init();
+  // }
+  // if (nvs_ret != ESP_OK) {
+  //   ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_ret));
+  //   return;
+  // }
 
-  // Initialize NimBLE port (handles controller init internally)
-  ESP_LOGD(TAG, "Calling nimble_port_init()...");
-  esp_err_t ret = nimble_port_init();
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
-    return;
-  }
+  // // Release Classic BT memory (ignore error if already released)
+  // (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
-  // Configure host callbacks
-  ble_hs_cfg.sync_cb = NimBLEProxy::on_sync_;
-  ble_hs_cfg.reset_cb = NimBLEProxy::on_reset_;
+  // // Initialize NimBLE port (handles controller init internally)
+  // ESP_LOGD(TAG, "Calling nimble_port_init()...");
+  // esp_err_t ret = nimble_port_init();
+  // if (ret != ESP_OK) {
+  //   ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
+  //   return;
+  // }
 
-  // Initialize BLE store config before starting host task
-  ESP_LOGD(TAG, "Initializing BLE store config...");
-  ble_store_config_init();
+  // // Configure host callbacks
+  // ble_hs_cfg.sync_cb = NimBLEProxy::on_sync_;
+  // ble_hs_cfg.reset_cb = NimBLEProxy::on_reset_;
 
-  // Initialize GAP/GATT services before starting host task
-  ESP_LOGD(TAG, "Initializing GAP/GATT services...");
-  ble_svc_gap_init();
-  ble_svc_gatt_init();
+  // // Initialize BLE store config before starting host task
+  // ESP_LOGD(TAG, "Initializing BLE store config...");
+  // ble_store_config_init();
 
-  // Set device name
-  int rc = ble_svc_gap_device_name_set("ESPHome NimBLE Proxy");
-  if (rc != 0) {
-    ESP_LOGE(TAG, "Error setting device name: %d", rc);
-  }
+  // // Initialize GAP/GATT services before starting host task
+  // ESP_LOGD(TAG, "Initializing GAP/GATT services...");
+  // ble_svc_gap_init();
+  // ble_svc_gatt_init();
 
-  // Register any additional GATT services (e.g., from nimble_improv)
-  if (!additional_gatt_services.empty()) {
-    ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
-    for (const auto *services : additional_gatt_services) {
-      rc = ble_gatts_count_cfg(services);
-      if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_count_cfg failed for additional service: %d", rc);
-        continue;
-      }
+  // // Set device name
+  // int rc = ble_svc_gap_device_name_set("ESPHome NimBLE Proxy");
+  // if (rc != 0) {
+  //   ESP_LOGE(TAG, "Error setting device name: %d", rc);
+  // }
 
-      rc = ble_gatts_add_svcs(services);
-      if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_add_svcs failed for additional service: %d", rc);
-      } else {
-        ESP_LOGI(TAG, "Successfully registered additional GATT service");
-      }
-    }
-  }
+  // // Register any additional GATT services (e.g., from nimble_improv)
+  // if (!additional_gatt_services.empty()) {
+  //   ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
+  //   for (const auto *services : additional_gatt_services) {
+  //     rc = ble_gatts_count_cfg(services);
+  //     if (rc != 0) {
+  //       ESP_LOGE(TAG, "ble_gatts_count_cfg failed for additional service: %d", rc);
+  //       continue;
+  //     }
 
-  // Start NimBLE host task (only once)
-  if (!this->host_task_started_) {
-    ESP_LOGD(TAG, "Starting NimBLE host task...");
-    nimble_port_freertos_init(NimBLEProxy::host_task_);
-    this->host_task_started_ = true;
-  }
+  //     rc = ble_gatts_add_svcs(services);
+  //     if (rc != 0) {
+  //       ESP_LOGE(TAG, "ble_gatts_add_svcs failed for additional service: %d", rc);
+  //     } else {
+  //       ESP_LOGI(TAG, "Successfully registered additional GATT service");
+  //     }
+  //   }
+  // }
 
-  ESP_LOGI(TAG, "NimBLE Proxy setup complete");
+  // // Start NimBLE host task (only once)
+  // if (!this->host_task_started_) {
+  //   ESP_LOGD(TAG, "Starting NimBLE host task...");
+  //   nimble_port_freertos_init(NimBLEProxy::host_task_);
+  //   this->host_task_started_ = true;
+  // }
+
+  ESP_LOGI(TAG, "NimBLE Proxy setup complete (initialization handled by nimble_base)");
 }
 
 void NimBLEProxy::on_sync_() {
@@ -176,7 +183,8 @@ void NimBLEProxy::on_sync_() {
 
     // If we have advertising service UUIDs (e.g., Improv), start advertising
     // Otherwise just scan (normal BLE proxy behavior)
-    if (!advertising_service_uuids.empty()) {
+    auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
+    if (!advertising_uuids.empty()) {
       ESP_LOGI(TAG, "Starting advertising (registered services detected)");
       global_nimble_proxy->start_advertising_();
     }
@@ -295,8 +303,9 @@ void NimBLEProxy::start_advertising_() {
   // Calculation: Flags(3) + Name(2+N) + UUID128(18) = 23+N bytes
   // Maximum name length: 31 - 23 = 8 characters
   // Format: "h-XXYYZZ" (8 chars) where XXYYZZ is last 3 bytes of MAC
+  auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
   static ble_uuid128_t uuid_storage[1];
-  if (!advertising_service_uuids.empty() && rc_addr == 0) {
+  if (!advertising_uuids.empty() && rc_addr == 0) {
     // Use minimal name with MAC: "h-ABC123" (8 chars max)
     // Extract first char from device name
     std::string short_name = name_base;
@@ -317,9 +326,9 @@ void NimBLEProxy::start_advertising_() {
   }
 
   // If we have service UUIDs, include them in MAIN advertising packet
-  if (!advertising_service_uuids.empty()) {
+  if (!advertising_uuids.empty()) {
 
-    uuid_storage[0] = *advertising_service_uuids[0];
+    uuid_storage[0] = *advertising_uuids[0];
     fields.uuids128 = uuid_storage;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;

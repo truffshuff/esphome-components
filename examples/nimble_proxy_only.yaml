@@ -1,0 +1,46 @@
+# Example: NimBLE Proxy Only for Home Assistant
+# This example shows how to use nimble_proxy WITHOUT nimble_improv
+# Device acts as a BLE proxy for Home Assistant
+
+esphome:
+  name: ble-proxy
+  friendly_name: "BLE Proxy"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# NimBLE Base - Required for all NimBLE components
+nimble_base:
+
+# WiFi configuration (hard-coded)
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot
+  ap:
+    ssid: "BLE-Proxy Fallback"
+    password: "12345678"
+
+# API for Home Assistant connection (required for proxy)
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# OTA updates
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# BLE Proxy for Home Assistant
+nimble_proxy:
+  active: true
+  max_connections: 3
+
+# Note: No nimble_improv component needed!
+# This device only acts as a BLE proxy for Home Assistant
