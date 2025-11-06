@@ -3,6 +3,7 @@
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/nimble_proxy/nimble_proxy.h"
+#include "esphome/core/setup_priority.h"  // for setup_priority::WIFI
 #include <algorithm>  // for std::min
 #include <cstring>
 
@@ -140,6 +141,11 @@ void NimBLEImprov::setup() {
   this->set_state_(IMPROV_STATE_STOPPED);
 }
 
+float NimBLEImprov::get_setup_priority() const {
+  // Ensure we load/apply saved WiFi creds before WiFi component starts
+  return esphome::setup_priority::WIFI - 1.0f;
+}
+
 // Persist credentials to NVS
 void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string &password) {
   StoredWiFi rec{};
@@ -148,6 +154,13 @@ void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string 
   std::strncpy(rec.password, password.c_str(), sizeof(rec.password) - 1);
   bool ok = this->pref_creds_.save(&rec);
   ESP_LOGI(TAG, "Saved WiFi credentials to NVS: %s", ok ? "OK" : "FAIL");
+
+  // Also update the WiFi networks list immediately
+  wifi::WiFiAP ap;
+  ap.set_ssid(rec.ssid);
+  ap.set_password(rec.password);
+  std::vector<wifi::WiFiAP> nets{ap};
+  wifi::global_wifi_component->set_sta(nets);
 }
 
 // Load credentials from NVS and switch to them
@@ -162,13 +175,15 @@ void NimBLEImprov::load_saved_credentials_() {
     return;
   }
 
+  // Overwrite the WiFi networks list so YAML entries don’t take precedence
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);
+  std::vector<wifi::WiFiAP> nets{ap};
+  wifi::global_wifi_component->set_sta(nets);
 
-  // Apply immediately so device prefers saved creds on boot
   ESP_LOGI(TAG, "Loaded saved WiFi credentials for SSID '%s' from NVS", rec.ssid);
-  wifi::global_wifi_component->start_connecting(ap, false);
+  // Let WiFi component connect using its normal flow (now with our list)
 }
 
 void NimBLEImprov::loop() {
@@ -469,17 +484,13 @@ void NimBLEImprov::check_wifi_connection_() {
     this->set_state_(IMPROV_STATE_PROVISIONED);
     this->wifi_connect_running_ = false;
 
-    // Persist new creds so they survive reboot
+    // Persist and set as the only network so it survives reboot
     this->save_credentials_(this->incoming_ssid_, this->incoming_password_);
 
     // Send success response with redirect URL
     auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
     std::string redirect_url = "http://";
-    if (!ip_addresses.empty()) {
-      redirect_url += ip_addresses[0].str();
-    } else {
-      redirect_url += "192.168.1.1";
-    }
+    redirect_url += !ip_addresses.empty() ? ip_addresses[0].str() : "192.168.1.1";
     redirect_url += "/";
 
     std::vector<uint8_t> response;
