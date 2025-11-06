@@ -131,9 +131,18 @@ NimBLEImprov::NimBLEImprov() {
 }
 
 void NimBLEImprov::setup() {
-  // Prepare preference handle and try loading saved creds on boot
+  // Prepare preference handle
   this->pref_creds_ = global_preferences->make_preference<StoredWiFi>(PREF_ID_WIFI);
-  this->load_saved_credentials_();
+
+  // Only load saved credentials if WiFi doesn't already have STA configured
+  // This prevents overwriting newly provisioned credentials with old NVS data
+  auto sta_list = wifi::global_wifi_component->get_sta();
+  if (sta_list.empty()) {
+    ESP_LOGD(TAG, "No WiFi STA configured, loading from NVS if available");
+    this->load_saved_credentials_();
+  } else {
+    ESP_LOGD(TAG, "WiFi STA already configured, skipping NVS load");
+  }
 
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
   ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
