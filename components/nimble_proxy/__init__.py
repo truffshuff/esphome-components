@@ -3,7 +3,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_ID
 
 CODEOWNERS = ["@truffshuff"]
-DEPENDENCIES = ["api"]
+DEPENDENCIES = ["api", "nimble_base"]
 AUTO_LOAD = []
 
 nimble_proxy_ns = cg.esphome_ns.namespace("nimble_proxy")

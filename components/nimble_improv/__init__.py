@@ -11,7 +11,7 @@ from esphome.const import (
 )
 from esphome.core import CORE, coroutine_with_priority
 
-DEPENDENCIES = ["esp32", "wifi"]
+DEPENDENCIES = ["esp32", "wifi", "nimble_base"]
 AUTO_LOAD = ["output"]
 CODEOWNERS = ["@truffshuff"]
 

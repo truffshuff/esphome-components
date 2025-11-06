@@ -2,7 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
-#include "esphome/components/nimble_proxy/nimble_proxy.h"
+#include "esphome/components/nimble_base/nimble_base.h"
 #include <algorithm>
 #include <cstring>
 
@@ -120,14 +120,14 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
 NimBLEImprov::NimBLEImprov() {
   global_nimble_improv = this;
 
-  // Register Improv GATT services with nimble_proxy
-  // This happens at construction time, before nimble_proxy's setup()
-  ESP_LOGI(TAG, "Registering Improv GATT services with nimble_proxy");
-  nimble_proxy::NimBLEProxy::register_gatt_services(improv_gatt_svcs);
+  // Register Improv GATT services with nimble_base
+  // This happens at construction time, before nimble_base's setup()
+  ESP_LOGI(TAG, "Registering Improv GATT services with nimble_base");
+  nimble_base::NimBLEBase::register_gatt_services(improv_gatt_svcs);
 
   // Register Improv service UUID for advertising so clients can discover it
   ESP_LOGI(TAG, "Registering Improv service UUID for advertising");
-  nimble_proxy::NimBLEProxy::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
+  nimble_base::NimBLEBase::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
 }
 
 void NimBLEImprov::setup() {
