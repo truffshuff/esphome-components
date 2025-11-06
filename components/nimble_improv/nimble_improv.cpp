@@ -108,9 +108,9 @@ void NimBLEImprov::loop() {
       ESP_LOGD(TAG, "RPC Result characteristic handle: %d", this->rpc_result_handle_);
     }
 
-    // Start advertising
-    ESP_LOGI(TAG, "Starting Improv advertising");
-    this->start_advertising_();
+    // Don't advertise separately - nimble_proxy already handles advertising
+    // The Improv service is available via the existing advertising
+    ESP_LOGI(TAG, "Improv service ready (using nimble_proxy advertising)");
     this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
     this->service_started_ = true;
   }
@@ -136,6 +136,9 @@ void NimBLEImprov::dump_config() {
   ESP_LOGCONFIG(TAG, "  WiFi Timeout: %u ms", this->wifi_timeout_);
 }
 
+// Advertising not needed - nimble_proxy handles advertising
+// The Improv service is available via nimble_proxy's existing advertising
+/*
 void NimBLEImprov::start_advertising_() {
   struct ble_gap_adv_params adv_params;
   struct ble_hs_adv_fields fields;
@@ -176,6 +179,7 @@ void NimBLEImprov::start_advertising_() {
 
   ESP_LOGI(TAG, "BLE advertising started");
 }
+*/
 
 void NimBLEImprov::stop_service_() {
   ESP_LOGI(TAG, "Stopping Improv BLE service");
