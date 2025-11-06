@@ -310,14 +310,18 @@ void NimBLEProxy::start_advertising_() {
   if (!advertising_service_uuids.empty()) {
     memset(&rsp_fields, 0, sizeof(rsp_fields));
 
-    // Allocate array of UUID structs on the stack
-    ble_uuid128_t uuid_array[advertising_service_uuids.size()];
-    for (size_t i = 0; i < advertising_service_uuids.size(); i++) {
-      uuid_array[i] = *advertising_service_uuids[i];
+    // IMPORTANT: We can't point directly to the vector of pointers - NimBLE expects
+    // a contiguous array of ble_uuid128_t structs. But we also can't use stack allocation
+    // because the data needs to persist. Use static storage.
+    static ble_uuid128_t uuid_storage[10];  // Max 10 service UUIDs should be plenty
+
+    size_t num_uuids = std::min(advertising_service_uuids.size(), (size_t)10);
+    for (size_t i = 0; i < num_uuids; i++) {
+      uuid_storage[i] = *advertising_service_uuids[i];
     }
 
-    rsp_fields.uuids128 = uuid_array;
-    rsp_fields.num_uuids128 = advertising_service_uuids.size();
+    rsp_fields.uuids128 = uuid_storage;
+    rsp_fields.num_uuids128 = num_uuids;
     rsp_fields.uuids128_is_complete = 1;
 
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
@@ -325,7 +329,7 @@ void NimBLEProxy::start_advertising_() {
       ESP_LOGE(TAG, "Error setting scan response fields: %d", rc);
       return;
     }
-    ESP_LOGI(TAG, "Added %d 128-bit service UUID(s) to scan response", advertising_service_uuids.size());
+    ESP_LOGI(TAG, "Added %d 128-bit service UUID(s) to scan response", num_uuids);
   }
 
   // Start advertising
