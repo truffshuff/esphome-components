@@ -96,8 +96,9 @@ class NimBLEImprov : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  // Must run BEFORE nimble_proxy to register GATT services before host starts
-  float get_setup_priority() const override { return setup_priority::BEFORE_CONNECTION; }
+  // Must run BEFORE nimble_proxy (AFTER_BLUETOOTH = -1.5) to register GATT services first
+  // Higher number = runs earlier, so use BLUETOOTH (= -10.0) to run before nimble_proxy
+  float get_setup_priority() const override { return setup_priority::BLUETOOTH; }
 
   // Configuration methods
   void set_authorizer(output::BinaryOutput *authorizer) { this->authorizer_ = authorizer; }
