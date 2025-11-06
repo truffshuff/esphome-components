@@ -291,99 +291,154 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
     return;
   }
 
-  ImprovCommand command = static_cast<ImprovCommand>(data[0]);
+  uint8_t cmd = data[0];
+  size_t idx = 1;
 
-  switch (command) {
-    case WIFI_SETTINGS: {
-      if (!this->authorized_) {
-        this->set_error_(ERROR_NOT_AUTHORIZED);
+  // Clear previous error on new command
+  this->set_error_(IMPROV_ERROR_NONE);
+
+  //ImprovCommand command = static_cast<ImprovCommand>(data[0]);
+
+
+  switch (cmd) {
+    case IMPROV_CMD_WIFI_SETTINGS: {
+      std::string ssid, password;
+      if (!read_lp_str_(data, idx, ssid) || !read_lp_str_(data, idx, password)) {
+        this->set_error_(IMPROV_ERROR_INVALID_RPC);
         return;
       }
-
-      // Parse SSID and password from command data
-      // Format: [command][ssid_len][ssid][password_len][password]
-      if (data.size() < 3) {
-        this->set_error_(ERROR_INVALID_RPC);
+      if (ssid.empty()) {
+        this->set_error_(IMPROV_ERROR_INVALID_SSID);
         return;
       }
-
-      size_t pos = 1;
-      uint8_t ssid_len = data[pos++];
-      if (pos + ssid_len > data.size()) {
-        this->set_error_(ERROR_INVALID_RPC);
-        return;
-      }
-
-      std::string ssid(data.begin() + pos, data.begin() + pos + ssid_len);
-      pos += ssid_len;
-
-      if (pos >= data.size()) {
-        this->set_error_(ERROR_INVALID_RPC);
-        return;
-      }
-
-      uint8_t password_len = data[pos++];
-      if (pos + password_len > data.size()) {
-        this->set_error_(ERROR_INVALID_RPC);
-        return;
-      }
-
-      std::string password(data.begin() + pos, data.begin() + pos + password_len);
-
-      ESP_LOGI(TAG, "Received WiFi credentials for SSID: %s", ssid.c_str());
-      this->start_wifi_connect_(ssid, password);
-      break;
+      this->set_state_(IMPROV_STATE_PROVISIONING);
+      this->start_wifi_connect_(ssid, password);  // existing method that kicks off WiFi connect
+      return;
     }
 
-    case IDENTIFY: {
-      ESP_LOGI(TAG, "Identify command received");
-      if (this->status_indicator_ != nullptr) {
-        this->status_indicator_->turn_on();
-        // TODO: Turn off after identify_duration_
-      }
-      break;
+    case IMPROV_CMD_IDENTIFY: {
+      // Acknowledge Identify with empty result
+      this->send_response_({});  // existing method that notifies RPC Result
+      return;
     }
 
-    case GET_DEVICE_INFO: {
-      ESP_LOGI(TAG, "Get device info command received");
-
-      // Send device info response
-      // Format: [command][firmware_len][firmware][version_len][version][hardware_len][hardware][device_name_len][device_name]
-      std::vector<uint8_t> response;
-      response.push_back(GET_DEVICE_INFO);
-
-      std::string firmware = "ESPHome";
-      response.push_back(firmware.length());
-      response.insert(response.end(), firmware.begin(), firmware.end());
-
-      std::string version = App.get_compilation_time();
-      response.push_back(version.length());
-      response.insert(response.end(), version.begin(), version.end());
-
-      std::string hardware = "ESP32-S3";
-      response.push_back(hardware.length());
-      response.insert(response.end(), hardware.begin(), hardware.end());
-
-      std::string device_name = App.get_name();
-      response.push_back(device_name.length());
-      response.insert(response.end(), device_name.begin(), device_name.end());
-
-      this->send_response_(response);
-      break;
+    case IMPROV_CMD_GET_DEVICE_INFO: {
+      // 4 LP strings: name, firmware, hardware, address/url (address left empty here)
+      std::vector<uint8_t> payload;
+      auto push_lp = [&](const std::string &s) {
+        uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, s.size()));
+        payload.push_back(n);
+        payload.insert(payload.end(), s.begin(), s.begin() + n);
+      };
+      push_lp(App.get_name());
+      push_lp(App.get_compilation_time()); // or your version string
+      push_lp("ESP32-S3");
+      push_lp(""); // address/URL will come after WiFi connects
+      this->send_response_(payload);
+      return;
     }
 
-    case GET_WIFI_NETWORKS: {
-      ESP_LOGI(TAG, "Get WiFi networks command received");
-      // TODO: Scan and send WiFi networks
-      // This would require triggering a WiFi scan and formatting results
-      break;
+    case IMPROV_CMD_GET_WIFI_NETWORKS: {
+      // Not implemented: return empty list
+      this->send_response_({});
+      return;
     }
 
     default:
-      ESP_LOGW(TAG, "Unknown command: 0x%02X", command);
-      this->set_error_(ERROR_UNKNOWN_RPC);
-      break;
+      this->set_error_(IMPROV_ERROR_INVALID_RPC);
+      return;
   }
+  // switch (command) {
+  //   case WIFI_SETTINGS: {
+  //     if (!this->authorized_) {
+  //       this->set_error_(ERROR_NOT_AUTHORIZED);
+  //       return;
+  //     }
+
+  //     // Parse SSID and password from command data
+  //     // Format: [command][ssid_len][ssid][password_len][password]
+  //     if (data.size() < 3) {
+  //       this->set_error_(ERROR_INVALID_RPC);
+  //       return;
+  //     }
+
+  //     size_t pos = 1;
+  //     uint8_t ssid_len = data[pos++];
+  //     if (pos + ssid_len > data.size()) {
+  //       this->set_error_(ERROR_INVALID_RPC);
+  //       return;
+  //     }
+
+  //     std::string ssid(data.begin() + pos, data.begin() + pos + ssid_len);
+  //     pos += ssid_len;
+
+  //     if (pos >= data.size()) {
+  //       this->set_error_(ERROR_INVALID_RPC);
+  //       return;
+  //     }
+
+  //     uint8_t password_len = data[pos++];
+  //     if (pos + password_len > data.size()) {
+  //       this->set_error_(ERROR_INVALID_RPC);
+  //       return;
+  //     }
+
+  //     std::string password(data.begin() + pos, data.begin() + pos + password_len);
+
+  //     ESP_LOGI(TAG, "Received WiFi credentials for SSID: %s", ssid.c_str());
+  //     this->start_wifi_connect_(ssid, password);
+  //     break;
+  //   }
+
+  //   case IDENTIFY: {
+  //     ESP_LOGI(TAG, "Identify command received");
+  //     if (this->status_indicator_ != nullptr) {
+  //       this->status_indicator_->turn_on();
+  //       // TODO: Turn off after identify_duration_
+  //     }
+  //     break;
+  //   }
+
+  //   case GET_DEVICE_INFO: {
+  //     ESP_LOGI(TAG, "Get device info command received");
+
+  //     // Send device info response
+  //     // Format: [command][firmware_len][firmware][version_len][version][hardware_len][hardware][device_name_len][device_name]
+  //     std::vector<uint8_t> response;
+  //     response.push_back(GET_DEVICE_INFO);
+
+  //     std::string firmware = "ESPHome";
+  //     response.push_back(firmware.length());
+  //     response.insert(response.end(), firmware.begin(), firmware.end());
+
+  //     std::string version = App.get_compilation_time();
+  //     response.push_back(version.length());
+  //     response.insert(response.end(), version.begin(), version.end());
+
+  //     std::string hardware = "ESP32-S3";
+  //     response.push_back(hardware.length());
+  //     response.insert(response.end(), hardware.begin(), hardware.end());
+
+  //     std::string device_name = App.get_name();
+  //     response.push_back(device_name.length());
+  //     response.insert(response.end(), device_name.begin(), device_name.end());
+
+  //     this->send_response_(response);
+  //     break;
+  //   }
+
+  //   case GET_WIFI_NETWORKS: {
+  //     ESP_LOGI(TAG, "Get WiFi networks command received");
+  //     // TODO: Scan and send WiFi networks
+  //     // This would require triggering a WiFi scan and formatting results
+  //     break;
+  //   }
+
+  //   default:
+  //     ESP_LOGW(TAG, "Unknown command: 0x%02X", command);
+  //     this->set_error_(ERROR_UNKNOWN_RPC);
+  //     break;
+  // }
 }
 
 void NimBLEImprov::start_wifi_connect_(const std::string &ssid, const std::string &password) {
@@ -442,6 +497,19 @@ void NimBLEImprov::check_wifi_connection_() {
 
     // TODO: Save credentials to flash
   }
+}
+
+// On successful WiFi connect, send URL in RPC Result and move to PROVISIONED
+void NimBLEImprov::on_wifi_connected_() {
+  // Build http://<ip> as LP string
+  std::string url = "http://" + wifi::global_wifi_component->get_ip_address().str();
+  std::vector<uint8_t> payload;
+  uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, url.size()));
+  payload.push_back(n);
+  payload.insert(payload.end(), url.begin(), url.begin() + n);
+  this->send_response_(payload);
+  this->set_state_(IMPROV_STATE_PROVISIONED);
+  this->set_error_(IMPROV_ERROR_NONE);
 }
 
 void NimBLEImprov::send_response_(const std::vector<uint8_t> &data) {
