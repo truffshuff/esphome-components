@@ -291,23 +291,21 @@ void NimBLEProxy::start_advertising_() {
   int rc_addr = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr, nullptr);
 
   // If we have service UUIDs (like Improv), we need a shorter name to fit in 31 bytes
-  // Flags(3) + Name(~13) + UUID128(18) = ~34 bytes (exceeds 31 byte limit)
-  // So we use a shortened base name with MAC to stay under limit
+  // Calculation: Flags(3) + Name(2+N) + UUID128(18) = 23+N bytes
+  // Maximum name length: 31 - 23 = 8 characters
+  // Format: "h-XXYYZZ" (8 chars) where XXYYZZ is last 3 bytes of MAC
   static ble_uuid128_t uuid_storage[1];
   if (!advertising_service_uuids.empty() && rc_addr == 0) {
-    // Use shortened name: "halo-ABC123" (12 chars max including MAC)
-    // Extract just "halo" from full device name (strip version suffix if present)
+    // Use minimal name with MAC: "h-ABC123" (8 chars max)
+    // Extract first char from device name
     std::string short_name = name_base;
     size_t dash_pos = short_name.find('-');
     if (dash_pos != std::string::npos) {
-      short_name = short_name.substr(0, dash_pos);  // Keep only "halo" part
+      short_name = short_name.substr(0, dash_pos);  // Keep only base part (e.g., "halo")
     }
-    // Limit base name to 5 chars to ensure "base-XXYYZZ" fits in 12 chars
-    if (short_name.length() > 5) {
-      short_name = short_name.substr(0, 5);
-    }
-    snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
-             short_name.c_str(), addr[3], addr[4], addr[5]);
+    // Use first char + hyphen + MAC (1+1+6 = 8 chars)
+    snprintf(device_name, sizeof(device_name), "%c-%02X%02X%02X",
+             short_name[0], addr[3], addr[4], addr[5]);
   } else if (rc_addr == 0) {
     // No service UUIDs, use full name with MAC
     snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
