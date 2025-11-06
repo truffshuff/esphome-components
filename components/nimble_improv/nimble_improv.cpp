@@ -12,7 +12,7 @@ static const char *const TAG = "nimble_improv";
 // Global instance pointer for NimBLE callbacks
 static NimBLEImprov *global_nimble_improv = nullptr;
 
-// Forward declarations for characteristic access
+// Forward declarations for characteristic access (fix types)
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                       struct ble_gatt_access_ctxt *ctxt, void *arg);
 int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
@@ -24,10 +24,10 @@ static const ble_uuid16_t MODEL_NUMBER_UUID = BLE_UUID16_INIT(0x2A24);
 static const ble_uuid16_t FIRMWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A26);
 static const ble_uuid16_t MANUFACTURER_NAME_UUID = BLE_UUID16_INIT(0x2A29);
 
-// GATT service definitions (Device Info + Improv)
+// GATT service definitions (Device Info + Improv) with correct flags
 static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
     {
-        // Device Information Service (required by some Improv clients)
+        // Device Information Service
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &DEVICE_INFO_SERVICE_UUID.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
@@ -46,9 +46,7 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
                 .access_cb = device_info_chr_access,
                 .flags = BLE_GATT_CHR_F_READ,
             },
-            {
-                0, // No more characteristics
-            }
+            { 0 } // end of DIS chars
         },
     },
     {
@@ -57,48 +55,39 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
         .uuid = &IMPROV_SERVICE_UUID.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
-                // Status/Current State characteristic (read + notify)
+                // 8001 Status (read + notify)
                 .uuid = &IMPROV_STATUS_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = nullptr,
             },
             {
-                // Error State characteristic (read)
+                // 8002 Error (read + notify) — add NOTIFY so CCCD exists
                 .uuid = &IMPROV_ERROR_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = nullptr,
             },
             {
-                // RPC Command characteristic (write)
+                // 8003 RPC Command (write / write without response)
                 .uuid = &IMPROV_RPC_COMMAND_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-                .val_handle = nullptr,
             },
             {
-                // RPC Result characteristic (read + notify)
+                // 8004 RPC Result (read + notify)
                 .uuid = &IMPROV_RPC_RESULT_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = nullptr,
             },
             {
-                // Capabilities characteristic (read)
+                // 8005 Capabilities (read)
                 .uuid = &IMPROV_CAPABILITIES_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ,
-                .val_handle = nullptr,
             },
-            {
-                0, // No more characteristics
-            }
+            { 0 } // end of Improv chars
         },
     },
-    {
-        0, // No more services
-    }
+    { 0 } // end of services
 };
 
 NimBLEImprov::NimBLEImprov() {
@@ -295,35 +284,32 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
   size_t idx = 1;
 
   // Clear previous error on new command
-  this->set_error_(IMPROV_ERROR_NONE);
-
-  //ImprovCommand command = static_cast<ImprovCommand>(data[0]);
-
+  this->set_error_(ERROR_NONE);
 
   switch (cmd) {
-    case IMPROV_CMD_WIFI_SETTINGS: {
+    case CMD_WIFI_SETTINGS: {
       std::string ssid, password;
       if (!read_lp_str_(data, idx, ssid) || !read_lp_str_(data, idx, password)) {
-        this->set_error_(IMPROV_ERROR_INVALID_RPC);
+        this->set_error_(ERROR_INVALID_RPC);
         return;
       }
       if (ssid.empty()) {
-        this->set_error_(IMPROV_ERROR_INVALID_SSID);
+        this->set_error_(ERROR_INVALID_SSID);
         return;
       }
       this->set_state_(IMPROV_STATE_PROVISIONING);
-      this->start_wifi_connect_(ssid, password);  // existing method that kicks off WiFi connect
+      this->start_wifi_connect_(ssid, password);
       return;
     }
 
-    case IMPROV_CMD_IDENTIFY: {
+    case CMD_IDENTIFY: {
       // Acknowledge Identify with empty result
-      this->send_response_({});  // existing method that notifies RPC Result
+      this->send_response_({});
       return;
     }
 
-    case IMPROV_CMD_GET_DEVICE_INFO: {
-      // 4 LP strings: name, firmware, hardware, address/url (address left empty here)
+    case CMD_GET_DEVICE_INFO: {
+      // 4 LP strings: name, firmware, hardware, address/url (empty until WiFi connects)
       std::vector<uint8_t> payload;
       auto push_lp = [&](const std::string &s) {
         uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, s.size()));
@@ -331,114 +317,23 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
         payload.insert(payload.end(), s.begin(), s.begin() + n);
       };
       push_lp(App.get_name());
-      push_lp(App.get_compilation_time()); // or your version string
+      push_lp(App.get_compilation_time()); // or your version
       push_lp("ESP32-S3");
-      push_lp(""); // address/URL will come after WiFi connects
+      push_lp(""); // URL sent after WiFi connects
       this->send_response_(payload);
       return;
     }
 
-    case IMPROV_CMD_GET_WIFI_NETWORKS: {
-      // Not implemented: return empty list
+    case CMD_GET_WIFI_NETWORKS: {
+      // Not implemented: return empty list so client allows manual entry
       this->send_response_({});
       return;
     }
 
     default:
-      this->set_error_(IMPROV_ERROR_INVALID_RPC);
+      this->set_error_(ERROR_INVALID_RPC);
       return;
   }
-  // switch (command) {
-  //   case WIFI_SETTINGS: {
-  //     if (!this->authorized_) {
-  //       this->set_error_(ERROR_NOT_AUTHORIZED);
-  //       return;
-  //     }
-
-  //     // Parse SSID and password from command data
-  //     // Format: [command][ssid_len][ssid][password_len][password]
-  //     if (data.size() < 3) {
-  //       this->set_error_(ERROR_INVALID_RPC);
-  //       return;
-  //     }
-
-  //     size_t pos = 1;
-  //     uint8_t ssid_len = data[pos++];
-  //     if (pos + ssid_len > data.size()) {
-  //       this->set_error_(ERROR_INVALID_RPC);
-  //       return;
-  //     }
-
-  //     std::string ssid(data.begin() + pos, data.begin() + pos + ssid_len);
-  //     pos += ssid_len;
-
-  //     if (pos >= data.size()) {
-  //       this->set_error_(ERROR_INVALID_RPC);
-  //       return;
-  //     }
-
-  //     uint8_t password_len = data[pos++];
-  //     if (pos + password_len > data.size()) {
-  //       this->set_error_(ERROR_INVALID_RPC);
-  //       return;
-  //     }
-
-  //     std::string password(data.begin() + pos, data.begin() + pos + password_len);
-
-  //     ESP_LOGI(TAG, "Received WiFi credentials for SSID: %s", ssid.c_str());
-  //     this->start_wifi_connect_(ssid, password);
-  //     break;
-  //   }
-
-  //   case IDENTIFY: {
-  //     ESP_LOGI(TAG, "Identify command received");
-  //     if (this->status_indicator_ != nullptr) {
-  //       this->status_indicator_->turn_on();
-  //       // TODO: Turn off after identify_duration_
-  //     }
-  //     break;
-  //   }
-
-  //   case GET_DEVICE_INFO: {
-  //     ESP_LOGI(TAG, "Get device info command received");
-
-  //     // Send device info response
-  //     // Format: [command][firmware_len][firmware][version_len][version][hardware_len][hardware][device_name_len][device_name]
-  //     std::vector<uint8_t> response;
-  //     response.push_back(GET_DEVICE_INFO);
-
-  //     std::string firmware = "ESPHome";
-  //     response.push_back(firmware.length());
-  //     response.insert(response.end(), firmware.begin(), firmware.end());
-
-  //     std::string version = App.get_compilation_time();
-  //     response.push_back(version.length());
-  //     response.insert(response.end(), version.begin(), version.end());
-
-  //     std::string hardware = "ESP32-S3";
-  //     response.push_back(hardware.length());
-  //     response.insert(response.end(), hardware.begin(), hardware.end());
-
-  //     std::string device_name = App.get_name();
-  //     response.push_back(device_name.length());
-  //     response.insert(response.end(), device_name.begin(), device_name.end());
-
-  //     this->send_response_(response);
-  //     break;
-  //   }
-
-  //   case GET_WIFI_NETWORKS: {
-  //     ESP_LOGI(TAG, "Get WiFi networks command received");
-  //     // TODO: Scan and send WiFi networks
-  //     // This would require triggering a WiFi scan and formatting results
-  //     break;
-  //   }
-
-  //   default:
-  //     ESP_LOGW(TAG, "Unknown command: 0x%02X", command);
-  //     this->set_error_(ERROR_UNKNOWN_RPC);
-  //     break;
-  // }
 }
 
 void NimBLEImprov::start_wifi_connect_(const std::string &ssid, const std::string &password) {
@@ -478,7 +373,7 @@ void NimBLEImprov::check_wifi_connection_() {
     this->set_state_(IMPROV_STATE_PROVISIONED);
     this->wifi_connect_running_ = false;
 
-    // Send success response with redirect URL (IP address)
+    // Send success response with redirect URL (LP string) on RPC Result
     auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
     std::string redirect_url = "http://";
     if (!ip_addresses.empty()) {
@@ -489,71 +384,17 @@ void NimBLEImprov::check_wifi_connection_() {
     redirect_url += "/";
 
     std::vector<uint8_t> response;
-    response.push_back(WIFI_SETTINGS);
-    response.push_back(redirect_url.length());
-    response.insert(response.end(), redirect_url.begin(), redirect_url.end());
+    uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, redirect_url.size()));
+    response.push_back(n);
+    response.insert(response.end(), redirect_url.begin(), redirect_url.begin() + n);
 
     this->send_response_(response);
 
+    this->set_error_(ERROR_NONE);
     // TODO: Save credentials to flash
   }
 }
 
-// On successful WiFi connect, send URL in RPC Result and move to PROVISIONED
-void NimBLEImprov::on_wifi_connected_() {
-  // Build http://<ip> as LP string
-  std::string url = "http://" + wifi::global_wifi_component->get_ip_address().str();
-  std::vector<uint8_t> payload;
-  uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, url.size()));
-  payload.push_back(n);
-  payload.insert(payload.end(), url.begin(), url.begin() + n);
-  this->send_response_(payload);
-  this->set_state_(IMPROV_STATE_PROVISIONED);
-  this->set_error_(IMPROV_ERROR_NONE);
-}
-
-void NimBLEImprov::send_response_(const std::vector<uint8_t> &data) {
-  if (this->conn_handle_ == BLE_HS_CONN_HANDLE_NONE) {
-    ESP_LOGW(TAG, "No active connection to send response");
-    return;
-  }
-
-  // Send notification on rpc_result characteristic
-  struct os_mbuf *om = ble_hs_mbuf_from_flat(data.data(), data.size());
-  if (om == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate mbuf for response");
-    return;
-  }
-
-  int rc = ble_gatts_notify_custom(this->conn_handle_, this->rpc_result_handle_, om);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "Failed to send notification: %d", rc);
-  } else {
-    ESP_LOGD(TAG, "Sent response (%d bytes)", data.size());
-  }
-}
-
-// Optional: helper to send device info result (4 LP strings)
-void NimBLEImprov::send_device_info_result_() {
-  std::vector<uint8_t> payload;
-
-  auto push_lp = [&](const std::string &s) {
-    payload.push_back(static_cast<uint8_t>(std::min<size_t>(255, s.size())));
-    payload.insert(payload.end(), s.begin(), s.begin() + std::min<size_t>(255, s.size()));
-  };
-
-  std::string name = App.get_name();
-  std::string fw   = App.get_compilation_time(); // or your version string
-  std::string hw   = "ESP32-S3";
-  std::string addr = ""; // leave empty here; IP will be returned after WiFi connect via RPC Result
-
-  push_lp(name);
-  push_lp(fw);
-  push_lp(hw);
-  push_lp(addr);
-
-  this->send_response_(payload);
-}
 // NimBLE GATT characteristic access callback (non-static, declared as friend)
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                       struct ble_gatt_access_ctxt *ctxt, void *arg) {
@@ -572,7 +413,7 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
       global_nimble_improv->authorized_start_ = millis();
 
       // Clear any previous error before entering AUTHORIZED
-      global_nimble_improv->set_error_(IMPROV_ERROR_NONE);   // or ImprovError::NONE if using enum class
+      global_nimble_improv->set_error_(ERROR_NONE);
 
       // Move to AUTHORIZED (this should notify status if your set_state_ does)
       global_nimble_improv->set_state_(IMPROV_STATE_AUTHORIZED);
