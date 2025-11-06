@@ -3,8 +3,7 @@
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/nimble_proxy/nimble_proxy.h"
-#include "esphome/core/setup_priority.h"  // for setup_priority::WIFI
-#include <algorithm>  // for std::min
+#include <algorithm>
 #include <cstring>
 
 // Unique key for NVS storage (any non-zero 32-bit value)
@@ -142,8 +141,8 @@ void NimBLEImprov::setup() {
 }
 
 float NimBLEImprov::get_setup_priority() const {
-  // Run before the WiFi component initializes
-  return esphome::setup_priority::WIFI + 1.0f;
+  // Run before WiFi initializes
+  return 1000.0f;
 }
 
 // Persist credentials to NVS
