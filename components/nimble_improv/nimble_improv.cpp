@@ -600,5 +600,29 @@ int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   return BLE_ATT_ERR_UNLIKELY;
 }
 
+void NimBLEImprov::send_response_(const std::vector<uint8_t> &payload) {
+  // Ensure we have a connection and a valid value handle for RPC Result
+  if (this->conn_handle_ == BLE_HS_CONN_HANDLE_NONE || this->rpc_result_handle_ == 0) {
+    ESP_LOGW(TAG, "send_response_: no active connection or RPC Result handle missing");
+    return;
+  }
+
+  // Build mbuf from payload (zero-length is allowed for Identify ack, etc.)
+  const void *data_ptr = payload.empty() ? nullptr : payload.data();
+  struct os_mbuf *om = ble_hs_mbuf_from_flat(data_ptr, payload.size());
+  if (om == nullptr) {
+    ESP_LOGW(TAG, "send_response_: failed to allocate mbuf (len=%u)", (unsigned) payload.size());
+    return;
+  }
+
+  int rc = ble_gatts_notify_custom(this->conn_handle_, this->rpc_result_handle_, om);
+  if (rc != 0) {
+    ESP_LOGW(TAG, "send_response_: notify failed rc=%d (conn=%d handle=%u len=%u)",
+             rc, this->conn_handle_, (unsigned) this->rpc_result_handle_, (unsigned) payload.size());
+  } else {
+    ESP_LOGD(TAG, "send_response_: notified %u bytes on RPC Result", (unsigned) payload.size());
+  }
+}
+
 }  // namespace nimble_improv
 }  // namespace esphome
