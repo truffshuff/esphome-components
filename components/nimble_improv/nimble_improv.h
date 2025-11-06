@@ -106,7 +106,7 @@ class NimBLEImprov : public Component {
   void dump_config() override;
   // Run after WiFi so we can provision if needed, but priority doesn't matter much
   // since we register services in loop() after NimBLE is synced
-  float get_setup_priority() const override;  // run before WiFi setup
+  float get_setup_priority() const override;  // ensure we run before WiFi
 
   // Configuration methods
   void set_authorizer(output::BinaryOutput *authorizer) { this->authorizer_ = authorizer; }
