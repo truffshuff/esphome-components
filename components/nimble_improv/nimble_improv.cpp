@@ -496,8 +496,10 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     // Capabilities characteristic (read)
     ESP_LOGI(TAG, "Capabilities characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      // Capability: 0x00 = WiFi provisioning only
-      uint8_t capabilities = 0x00;
+      // Capability bitmask:
+      // Bit 0 (0x01) = Identify capability
+      // Setting bit 0 to indicate we support the Identify command
+      uint8_t capabilities = 0x01;  // Support Identify
       ESP_LOGI(TAG, "Returning capabilities: 0x%02x", capabilities);
       int rc = os_mbuf_append(ctxt->om, &capabilities, sizeof(capabilities));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
