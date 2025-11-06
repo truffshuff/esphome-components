@@ -74,6 +74,10 @@ NimBLEImprov::NimBLEImprov() {
   // This happens at construction time, before nimble_proxy's setup()
   ESP_LOGI(TAG, "Registering Improv GATT services with nimble_proxy");
   nimble_proxy::NimBLEProxy::register_gatt_services(improv_gatt_svcs);
+
+  // Register Improv service UUID for advertising so clients can discover it
+  ESP_LOGI(TAG, "Registering Improv service UUID for advertising");
+  nimble_proxy::NimBLEProxy::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
 }
 
 void NimBLEImprov::setup() {

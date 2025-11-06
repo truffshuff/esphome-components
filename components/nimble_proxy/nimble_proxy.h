@@ -41,6 +41,10 @@ class NimBLEProxy : public Component {
   static void register_gatt_services(const struct ble_gatt_svc_def *services);
   static std::vector<const struct ble_gatt_svc_def *> &get_additional_services();
 
+  // Allow external components to add 128-bit service UUIDs to advertising
+  // Must be called BEFORE setup() runs (use static registration)
+  static void register_advertising_service_uuid(const ble_uuid128_t *uuid);
+
   // API integration methods for Home Assistant connectivity
   void *get_api_connection() {
     std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
