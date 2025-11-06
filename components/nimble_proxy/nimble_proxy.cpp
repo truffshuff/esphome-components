@@ -45,6 +45,7 @@ static NimBLEProxy *global_nimble_proxy = nullptr;
 
 // Static storage for additional GATT services registered by other components
 static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
+static std::vector<const ble_uuid128_t *> advertising_service_uuids;
 
 }  // namespace nimble_proxy
 
@@ -65,6 +66,11 @@ void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services
 
 std::vector<const struct ble_gatt_svc_def *> &NimBLEProxy::get_additional_services() {
   return additional_gatt_services;
+}
+
+void NimBLEProxy::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
+  advertising_service_uuids.push_back(uuid);
+  ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", advertising_service_uuids.size());
 }
 
 void NimBLEProxy::setup() {
@@ -256,27 +262,35 @@ int NimBLEProxy::scan_callback_(struct ble_gap_event *event, void *arg) {
 void NimBLEProxy::start_advertising_() {
   struct ble_gap_adv_params adv_params;
   struct ble_hs_adv_fields fields;
-  
+
   // Configure advertising parameters
   memset(&adv_params, 0, sizeof(adv_params));
   adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;  // Undirected connectable
   adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;  // General discoverable
-  
+
   // Configure advertising data
   memset(&fields, 0, sizeof(fields));
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-  
+
   const char *name = "ESPHome Proxy";
   fields.name = (uint8_t *) name;
   fields.name_len = strlen(name);
   fields.name_is_complete = 1;
-  
+
+  // Add any registered 128-bit service UUIDs (e.g., Improv WiFi)
+  if (!advertising_service_uuids.empty()) {
+    fields.uuids128 = const_cast<ble_uuid128_t *>(advertising_service_uuids[0]);
+    fields.num_uuids128 = advertising_service_uuids.size();
+    fields.uuids128_is_complete = 1;
+    ESP_LOGI(TAG, "Including %d 128-bit service UUID(s) in advertising", advertising_service_uuids.size());
+  }
+
   int rc = ble_gap_adv_set_fields(&fields);
   if (rc != 0) {
     ESP_LOGE(TAG, "Error setting advertising fields: %d", rc);
     return;
   }
-  
+
   // Start advertising
   rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
                          &adv_params, NimBLEProxy::gap_event_handler_, NULL);
@@ -284,7 +298,7 @@ void NimBLEProxy::start_advertising_() {
     ESP_LOGE(TAG, "Error starting advertising: %d", rc);
     return;
   }
-  
+
   ESP_LOGI(TAG, "Advertising started");
 }
 
