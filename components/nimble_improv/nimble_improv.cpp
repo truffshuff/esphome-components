@@ -12,13 +12,47 @@ static const char *const TAG = "nimble_improv";
 // Global instance pointer for NimBLE callbacks
 static NimBLEImprov *global_nimble_improv = nullptr;
 
-// Forward declaration for characteristic access (non-static, matches friend declaration)
+// Forward declarations for characteristic access
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                       struct ble_gatt_access_ctxt *ctxt, void *arg);
+int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-// GATT service definition
+// Standard BLE UUIDs for Device Information Service
+static const ble_uuid16_t DEVICE_INFO_SERVICE_UUID = BLE_UUID16_INIT(0x180A);
+static const ble_uuid16_t MODEL_NUMBER_UUID = BLE_UUID16_INIT(0x2A24);
+static const ble_uuid16_t FIRMWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A26);
+static const ble_uuid16_t MANUFACTURER_NAME_UUID = BLE_UUID16_INIT(0x2A29);
+
+// GATT service definitions (Device Info + Improv)
 static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
     {
+        // Device Information Service (required by some Improv clients)
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &DEVICE_INFO_SERVICE_UUID.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = &MODEL_NUMBER_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = &FIRMWARE_REVISION_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = &MANUFACTURER_NAME_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                0, // No more characteristics
+            }
+        },
+    },
+    {
+        // Improv WiFi Service
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &IMPROV_SERVICE_UUID.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
@@ -581,6 +615,31 @@ int NimBLEImprov::gap_event_handler(struct ble_gap_event *event, void *arg) {
   return 0;
 }
 */
+
+// Device Information Service characteristic access callback
+int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg) {
+  const ble_uuid_t *uuid = ctxt->chr->uuid;
+
+  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+    const char *value = nullptr;
+
+    if (ble_uuid_cmp(uuid, &MODEL_NUMBER_UUID.u) == 0) {
+      value = App.get_name().c_str();
+    } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
+      value = App.get_compilation_time().c_str();
+    } else if (ble_uuid_cmp(uuid, &MANUFACTURER_NAME_UUID.u) == 0) {
+      value = "ESPHome";
+    }
+
+    if (value != nullptr) {
+      int rc = os_mbuf_append(ctxt->om, value, strlen(value));
+      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+  }
+
+  return BLE_ATT_ERR_UNLIKELY;
+}
 
 }  // namespace nimble_improv
 }  // namespace esphome
