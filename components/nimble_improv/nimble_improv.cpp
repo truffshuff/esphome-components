@@ -115,6 +115,18 @@ void NimBLEImprov::loop() {
     this->service_started_ = true;
   }
 
+  // Check if connection was lost
+  if (this->service_started_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE) {
+    struct ble_hs_conn *conn;
+    if (ble_hs_conn_find(this->conn_handle_, &conn) != 0) {
+      // Connection no longer exists
+      ESP_LOGI(TAG, "BLE connection lost: handle=%d", this->conn_handle_);
+      this->conn_handle_ = BLE_HS_CONN_HANDLE_NONE;
+      this->authorized_ = false;
+      this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
+    }
+  }
+
   // Check authorization timeout
   if (this->authorized_ && this->authorized_start_ > 0) {
     if (millis() - this->authorized_start_ > this->authorized_duration_) {
@@ -404,6 +416,20 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     return BLE_ATT_ERR_UNLIKELY;
   }
 
+  // Track connection handle on first access
+  if (global_nimble_improv->conn_handle_ == BLE_HS_CONN_HANDLE_NONE && conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+    global_nimble_improv->conn_handle_ = conn_handle;
+    ESP_LOGI(TAG, "BLE connection detected via characteristic access: handle=%d", conn_handle);
+
+    // Grant authorization if authorizer is not used
+    if (global_nimble_improv->authorizer_ == nullptr) {
+      global_nimble_improv->authorized_ = true;
+      global_nimble_improv->authorized_start_ = millis();
+      global_nimble_improv->set_state_(IMPROV_STATE_AUTHORIZED);
+      ESP_LOGI(TAG, "Auto-authorized (no authorizer configured)");
+    }
+  }
+
   const ble_uuid_t *uuid = ctxt->chr->uuid;
 
   // Determine which characteristic is being accessed
@@ -457,6 +483,9 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 // NimBLE GAP event handler (static)
+// Gap event handler not needed - nimble_proxy handles advertising
+// Connection tracking happens via characteristic access callbacks and loop() polling
+/*
 int NimBLEImprov::gap_event_handler(struct ble_gap_event *event, void *arg) {
   NimBLEImprov *instance = static_cast<NimBLEImprov*>(arg);
   if (instance == nullptr) {
@@ -520,6 +549,7 @@ int NimBLEImprov::gap_event_handler(struct ble_gap_event *event, void *arg) {
 
   return 0;
 }
+*/
 
 }  // namespace nimble_improv
 }  // namespace esphome
