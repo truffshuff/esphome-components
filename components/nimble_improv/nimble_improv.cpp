@@ -434,6 +434,9 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     }
   }
 
+  // Log all access attempts for debugging
+  ESP_LOGD(TAG, "GATT access: conn=%d attr=%d op=%d", conn_handle, attr_handle, ctxt->op);
+
   const ble_uuid_t *uuid = ctxt->chr->uuid;
 
   // Handle CCCD (notification enable/disable) for all characteristics
@@ -441,35 +444,41 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC || ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC) {
     // CCCD operations - allow client to enable/disable notifications
     // NimBLE handles the actual CCCD storage, we just need to not return an error
-    ESP_LOGD(TAG, "CCCD access for characteristic");
+    ESP_LOGI(TAG, "CCCD %s operation", ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "read" : "write");
     return 0;
   }
 
   // Determine which characteristic is being accessed
   if (ble_uuid_cmp(uuid, &IMPROV_STATUS_UUID.u) == 0) {
     // Status characteristic (read + notify)
+    ESP_LOGI(TAG, "Status characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       uint8_t state = static_cast<uint8_t>(global_nimble_improv->state_);
+      ESP_LOGI(TAG, "Returning status: %d", state);
       int rc = os_mbuf_append(ctxt->om, &state, sizeof(state));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_ERROR_UUID.u) == 0) {
     // Error characteristic (read)
+    ESP_LOGI(TAG, "Error characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       uint8_t error = static_cast<uint8_t>(global_nimble_improv->error_);
+      ESP_LOGI(TAG, "Returning error: %d", error);
       int rc = os_mbuf_append(ctxt->om, &error, sizeof(error));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_RPC_COMMAND_UUID.u) == 0) {
     // RPC Command characteristic (write)
+    ESP_LOGI(TAG, "RPC Command characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
       // Extract command data from mbuf
       uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
       std::vector<uint8_t> data(om_len);
       int rc = ble_hs_mbuf_to_flat(ctxt->om, data.data(), om_len, nullptr);
       if (rc == 0) {
+        ESP_LOGI(TAG, "Processing RPC command, length=%d", om_len);
         global_nimble_improv->process_command_(data);
       }
       return 0;
@@ -477,6 +486,7 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_RPC_RESULT_UUID.u) == 0) {
     // RPC Result characteristic (read - but typically sent via notify)
+    ESP_LOGI(TAG, "RPC Result characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       // Return empty data - results are sent via notifications
       return 0;
@@ -484,16 +494,20 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_CAPABILITIES_UUID.u) == 0) {
     // Capabilities characteristic (read)
+    ESP_LOGI(TAG, "Capabilities characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       // Capability: 0x00 = WiFi provisioning only
       uint8_t capabilities = 0x00;
+      ESP_LOGI(TAG, "Returning capabilities: 0x%02x", capabilities);
       int rc = os_mbuf_append(ctxt->om, &capabilities, sizeof(capabilities));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
   }
 
   // Log unhandled operations for debugging
-  ESP_LOGW(TAG, "Unhandled GATT operation: %d for characteristic", ctxt->op);
+  char uuid_str[BLE_UUID_STR_LEN];
+  ble_uuid_to_str(uuid, uuid_str);
+  ESP_LOGW(TAG, "Unhandled GATT operation: op=%d for UUID=%s", ctxt->op, uuid_str);
   return BLE_ATT_ERR_UNLIKELY;
 }
 
