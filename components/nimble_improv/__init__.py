@@ -65,18 +65,6 @@ async def to_code(config):
     cg.add(var.set_wifi_timeout(config[CONF_WIFI_TIMEOUT]))
 
     # No library dependency needed - using ESP-IDF native NimBLE
-    # Ensure NimBLE is enabled and Bluedroid is explicitly disabled
-    if CORE.using_esp_idf:
-        cg.add_build_flag("-DCONFIG_BT_NIMBLE_ENABLED=1")
-        cg.add_build_flag("-DCONFIG_BT_BLUEDROID_ENABLED=0")
-        cg.add_build_flag("-DCONFIG_BLUEDROID_ENABLED=0")
-        cg.add_build_flag("-DCONFIG_BT_CLASSIC_ENABLED=0")
-        cg.add_build_flag("-DCONFIG_BT_BLE_ENABLED=0")
-
-        # Disable Bluedroid sub-components that cause esp_bt_defs.h errors
-        cg.add_build_flag("-DCONFIG_BT_BLUFI_ENABLE=0")
-        cg.add_build_flag("-DCONFIG_BT_SPP_ENABLED=0")
-        cg.add_build_flag("-DCONFIG_BT_HFP_ENABLE=0")
-        cg.add_build_flag("-DCONFIG_BT_A2DP_ENABLE=0")
-        cg.add_build_flag("-DCONFIG_BT_GATTS_ENABLE=0")
-        cg.add_build_flag("-DCONFIG_BT_GATTC_ENABLE=0")
+    # Simply rely on user's sdkconfig_options in their YAML
+    # The user must have CONFIG_BT_NIMBLE_ENABLED and CONFIG_BT_BLUEDROID_ENABLED=n
+    # This mimics how nimble_proxy works (it doesn't set any BT flags)
