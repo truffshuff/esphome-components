@@ -96,7 +96,8 @@ class NimBLEImprov : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
+  // Must run BEFORE nimble_proxy to register GATT services before host starts
+  float get_setup_priority() const override { return setup_priority::BEFORE_CONNECTION; }
 
   // Configuration methods
   void set_authorizer(output::BinaryOutput *authorizer) { this->authorizer_ = authorizer; }
@@ -115,7 +116,6 @@ class NimBLEImprov : public Component {
   ImprovError get_error() const { return this->error_; }
 
  protected:
-  void start_service_();
   void start_advertising_();
   void stop_service_();
   void set_state_(ImprovState state);
@@ -151,6 +151,9 @@ class NimBLEImprov : public Component {
   std::string incoming_ssid_;
   std::string incoming_password_;
   bool wifi_connect_running_{false};
+
+  // Service state
+  bool service_started_{false};
 };
 
 }  // namespace nimble_improv
