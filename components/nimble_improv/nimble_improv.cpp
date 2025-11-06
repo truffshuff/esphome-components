@@ -3,6 +3,7 @@
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/nimble_proxy/nimble_proxy.h"
+#include <algorithm>  // for std::min
 
 namespace esphome {
 namespace nimble_improv {
@@ -11,6 +12,11 @@ static const char *const TAG = "nimble_improv";
 
 // Global instance pointer for NimBLE callbacks
 static NimBLEImprov *global_nimble_improv = nullptr;
+
+// If ERROR_INVALID_SSID isn't defined in your error enum, map it to INVALID_RPC
+#ifndef ERROR_INVALID_SSID
+#define ERROR_INVALID_SSID ERROR_INVALID_RPC
+#endif
 
 // Forward declarations for characteristic access (fix types)
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
@@ -287,7 +293,7 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
   this->set_error_(ERROR_NONE);
 
   switch (cmd) {
-    case CMD_WIFI_SETTINGS: {
+    case WIFI_SETTINGS: {  // was CMD_WIFI_SETTINGS
       std::string ssid, password;
       if (!read_lp_str_(data, idx, ssid) || !read_lp_str_(data, idx, password)) {
         this->set_error_(ERROR_INVALID_RPC);
@@ -302,13 +308,13 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
       return;
     }
 
-    case CMD_IDENTIFY: {
+    case IDENTIFY: {  // was CMD_IDENTIFY
       // Acknowledge Identify with empty result
       this->send_response_({});
       return;
     }
 
-    case CMD_GET_DEVICE_INFO: {
+    case GET_DEVICE_INFO: {  // was CMD_GET_DEVICE_INFO
       // 4 LP strings: name, firmware, hardware, address/url (empty until WiFi connects)
       std::vector<uint8_t> payload;
       auto push_lp = [&](const std::string &s) {
@@ -324,7 +330,7 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
       return;
     }
 
-    case CMD_GET_WIFI_NETWORKS: {
+    case GET_WIFI_NETWORKS: {  // was CMD_GET_WIFI_NETWORKS
       // Not implemented: return empty list so client allows manual entry
       this->send_response_({});
       return;
