@@ -18,6 +18,23 @@ static NimBLEImprov *global_nimble_improv = nullptr;
 #define ERROR_INVALID_SSID ERROR_INVALID_RPC
 #endif
 
+// Small helpers
+static bool read_lp_str_(const std::vector<uint8_t> &in, size_t &idx, std::string &out) {
+  if (idx >= in.size()) return false;
+  uint8_t len = in[idx++];
+  if (idx + len > in.size()) return false;
+  out.assign(reinterpret_cast<const char *>(&in[idx]), len);
+  idx += len;
+  return true;
+}
+
+static std::string to_hex_(const std::vector<uint8_t> &in) {
+  static const char *hex = "0123456789abcdef";
+  std::string s; s.reserve(in.size() * 2);
+  for (uint8_t b : in) { s.push_back(hex[b >> 4]); s.push_back(hex[b & 0xF]); }
+  return s;
+}
+
 // Forward declarations for characteristic access (fix types)
 int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                       struct ble_gatt_access_ctxt *ctxt, void *arg);
@@ -107,16 +124,6 @@ NimBLEImprov::NimBLEImprov() {
   // Register Improv service UUID for advertising so clients can discover it
   ESP_LOGI(TAG, "Registering Improv service UUID for advertising");
   nimble_proxy::NimBLEProxy::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
-}
-
-// Length-prefixed string reader used by process_command_
-static bool read_lp_str_(const std::vector<uint8_t> &in, size_t &idx, std::string &out) {
-  if (idx >= in.size()) return false;
-  uint8_t len = in[idx++];
-  if (idx + len > in.size()) return false;
-  out.assign(reinterpret_cast<const char *>(&in[idx]), len);
-  idx += len;
-  return true;
 }
 
 void NimBLEImprov::setup() {
@@ -281,6 +288,8 @@ void NimBLEImprov::set_error_(ImprovError error) {
 }
 
 void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
+  ESP_LOGD(TAG, "process_command_: raw len=%u hex=%s", (unsigned) data.size(), to_hex_(data).c_str());
+
   if (data.empty()) {
     this->set_error_(ERROR_INVALID_RPC);
     return;
@@ -293,28 +302,72 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
   this->set_error_(ERROR_NONE);
 
   switch (cmd) {
-    case WIFI_SETTINGS: {  // was CMD_WIFI_SETTINGS
+    case WIFI_SETTINGS: {
+      // Try BLE framing with [len][payload]
+      size_t pstart = idx;
+      size_t pend = data.size();
+      if (data.size() >= 2 && (size_t)(2 + data[1]) <= data.size()) {
+        uint8_t total_len = data[1];
+        pstart = 2;
+        pend = 2 + total_len;
+      }
+
+      bool parsed = false;
       std::string ssid, password;
-      if (!read_lp_str_(data, idx, ssid) || !read_lp_str_(data, idx, password)) {
+
+      // Attempt LP/LP inside payload
+      {
+        size_t p = pstart;
+        if (p < pend) {
+          // local slice for LP parsing
+          std::vector<uint8_t> slice(data.begin() + pstart, data.begin() + pend);
+          size_t si = 0;
+          if (read_lp_str_(slice, si, ssid) && read_lp_str_(slice, si, password) && si == slice.size()) {
+            parsed = true;
+          }
+        }
+      }
+
+      // Fallback: null-delimited SSID\0PASSWORD within payload
+      if (!parsed) {
+        if (pstart <= pend) {
+          auto beg = data.begin() + pstart;
+          auto end = data.begin() + pend;
+          auto it0 = std::find(beg, end, (uint8_t)0x00);
+          if (it0 != end) {
+            ssid.assign(reinterpret_cast<const char *>(&*beg), std::distance(beg, it0));
+            auto pwd_beg = it0 + 1;
+            password.assign(reinterpret_cast<const char *>(&*pwd_beg), std::distance(pwd_beg, end));
+            parsed = true;
+          }
+        }
+      }
+
+      if (!parsed) {
+        ESP_LOGW(TAG, "WIFI_SETTINGS: failed to parse payload (pstart=%u pend=%u)", (unsigned) pstart, (unsigned) pend);
         this->set_error_(ERROR_INVALID_RPC);
         return;
       }
+
+      ESP_LOGI(TAG, "WIFI_SETTINGS: ssid_len=%u pwd_len=%u", (unsigned) ssid.size(), (unsigned) password.size());
+
       if (ssid.empty()) {
         this->set_error_(ERROR_INVALID_SSID);
         return;
       }
+
       this->set_state_(IMPROV_STATE_PROVISIONING);
       this->start_wifi_connect_(ssid, password);
       return;
     }
 
-    case IDENTIFY: {  // was CMD_IDENTIFY
+    case IDENTIFY: {
       // Acknowledge Identify with empty result
       this->send_response_({});
       return;
     }
 
-    case GET_DEVICE_INFO: {  // was CMD_GET_DEVICE_INFO
+    case GET_DEVICE_INFO: {
       // 4 LP strings: name, firmware, hardware, address/url (empty until WiFi connects)
       std::vector<uint8_t> payload;
       auto push_lp = [&](const std::string &s) {
@@ -323,14 +376,14 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
         payload.insert(payload.end(), s.begin(), s.begin() + n);
       };
       push_lp(App.get_name());
-      push_lp(App.get_compilation_time()); // or your version
+      push_lp(App.get_compilation_time()); // or your version string
       push_lp("ESP32-S3");
       push_lp(""); // URL sent after WiFi connects
       this->send_response_(payload);
       return;
     }
 
-    case GET_WIFI_NETWORKS: {  // was CMD_GET_WIFI_NETWORKS
+    case GET_WIFI_NETWORKS: {
       // Not implemented: return empty list so client allows manual entry
       this->send_response_({});
       return;
