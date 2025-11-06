@@ -23,14 +23,14 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
         .uuid = &IMPROV_SERVICE_UUID.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
-                // Status characteristic (read + notify)
+                // Status/Current State characteristic (read + notify)
                 .uuid = &IMPROV_STATUS_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = nullptr,
             },
             {
-                // Error characteristic (read)
+                // Error State characteristic (read)
                 .uuid = &IMPROV_ERROR_UUID.u,
                 .access_cb = improv_chr_access,
                 .flags = BLE_GATT_CHR_F_READ,
