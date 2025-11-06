@@ -270,13 +270,14 @@ int NimBLEProxy::scan_callback_(struct ble_gap_event *event, void *arg) {
 void NimBLEProxy::start_advertising_() {
   struct ble_gap_adv_params adv_params;
   struct ble_hs_adv_fields fields;
+  struct ble_hs_adv_fields rsp_fields;
 
   // Configure advertising parameters
   memset(&adv_params, 0, sizeof(adv_params));
   adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;  // Undirected connectable
   adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;  // General discoverable
 
-  // Configure advertising data
+  // Configure main advertising data (flags + name)
   memset(&fields, 0, sizeof(fields));
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
@@ -285,25 +286,34 @@ void NimBLEProxy::start_advertising_() {
   fields.name_len = strlen(name);
   fields.name_is_complete = 1;
 
-  // Add any registered 128-bit service UUIDs (e.g., Improv WiFi)
-  // NimBLE expects an array of ble_uuid128_t structs, not pointers
-  // Create a temporary array on the stack
-  if (!advertising_service_uuids.empty()) {
-    // Allocate array of UUID structs (not pointers)
-    ble_uuid128_t uuid_array[advertising_service_uuids.size()];
-    for (size_t i = 0; i < advertising_service_uuids.size(); i++) {
-      uuid_array[i] = *advertising_service_uuids[i];
-    }
-    fields.uuids128 = uuid_array;
-    fields.num_uuids128 = advertising_service_uuids.size();
-    fields.uuids128_is_complete = 1;
-    ESP_LOGI(TAG, "Including %d 128-bit service UUID(s) in advertising", advertising_service_uuids.size());
-  }
-
   int rc = ble_gap_adv_set_fields(&fields);
   if (rc != 0) {
     ESP_LOGE(TAG, "Error setting advertising fields: %d", rc);
     return;
+  }
+
+  // Put 128-bit service UUIDs in scan response data to avoid exceeding 31-byte limit
+  // Main adv data: flags (3) + name (15) = 18 bytes ✓
+  // Scan response: UUID (18 bytes for one 128-bit UUID) ✓
+  if (!advertising_service_uuids.empty()) {
+    memset(&rsp_fields, 0, sizeof(rsp_fields));
+
+    // Allocate array of UUID structs on the stack
+    ble_uuid128_t uuid_array[advertising_service_uuids.size()];
+    for (size_t i = 0; i < advertising_service_uuids.size(); i++) {
+      uuid_array[i] = *advertising_service_uuids[i];
+    }
+
+    rsp_fields.uuids128 = uuid_array;
+    rsp_fields.num_uuids128 = advertising_service_uuids.size();
+    rsp_fields.uuids128_is_complete = 1;
+
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) {
+      ESP_LOGE(TAG, "Error setting scan response fields: %d", rc);
+      return;
+    }
+    ESP_LOGI(TAG, "Added %d 128-bit service UUID(s) to scan response", advertising_service_uuids.size());
   }
 
   // Start advertising
