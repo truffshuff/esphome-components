@@ -73,43 +73,8 @@ NimBLEImprov::NimBLEImprov() {
 void NimBLEImprov::setup() {
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
 
-  // Start the Improv service
-  this->start_service_();
-}
-
-void NimBLEImprov::loop() {
-  // Check authorization timeout
-  if (this->authorized_ && this->authorized_start_ > 0) {
-    if (millis() - this->authorized_start_ > this->authorized_duration_) {
-      ESP_LOGI(TAG, "Authorization expired");
-      this->authorized_ = false;
-      this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-    }
-  }
-
-  // Check WiFi connection progress
-  if (this->wifi_connect_running_) {
-    this->check_wifi_connection_();
-  }
-}
-
-void NimBLEImprov::dump_config() {
-  ESP_LOGCONFIG(TAG, "NimBLE Improv:");
-  ESP_LOGCONFIG(TAG, "  Authorized Duration: %u ms", this->authorized_duration_);
-  ESP_LOGCONFIG(TAG, "  WiFi Timeout: %u ms", this->wifi_timeout_);
-}
-
-void NimBLEImprov::start_service_() {
-  ESP_LOGI(TAG, "Starting Improv BLE service");
-
-  // Check if NimBLE is already initialized by nimble_proxy
-  // If not, we can't proceed (nimble_proxy should be loaded first)
-  if (!ble_hs_is_enabled()) {
-    ESP_LOGE(TAG, "NimBLE host not initialized! Make sure nimble_proxy is loaded before nimble_improv");
-    return;
-  }
-
-  // Register GATT services
+  // Register GATT services immediately (before NimBLE host starts)
+  // This must happen during setup, not later
   int rc = ble_gatts_count_cfg(improv_gatt_svcs);
   if (rc != 0) {
     ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", rc);
@@ -118,9 +83,12 @@ void NimBLEImprov::start_service_() {
 
   rc = ble_gatts_add_svcs(improv_gatt_svcs);
   if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gatts_add_svcs failed: %d", rc);
+    ESP_LOGE(TAG, "ble_gatts_add_svcs failed: %d - services must be registered before nimble_proxy starts", rc);
+    ESP_LOGE(TAG, "Make sure nimble_improv has higher setup priority than nimble_proxy");
     return;
   }
+
+  ESP_LOGI(TAG, "GATT services registered successfully");
 
   // Get characteristic value handles for later use
   rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
@@ -141,11 +109,39 @@ void NimBLEImprov::start_service_() {
     ESP_LOGD(TAG, "RPC Result characteristic handle: %d", this->rpc_result_handle_);
   }
 
-  // Start advertising
-  this->start_advertising_();
+  // Advertising will be started in loop() once NimBLE is ready
+  this->set_state_(IMPROV_STATE_STOPPED);
+  ESP_LOGI(TAG, "Waiting for NimBLE host to sync before starting advertising");
+}
 
-  this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-  ESP_LOGI(TAG, "Improv BLE service started successfully");
+void NimBLEImprov::loop() {
+  // Start advertising once NimBLE is synced (one-time check)
+  if (!this->service_started_ && ble_hs_synced()) {
+    ESP_LOGI(TAG, "NimBLE host synced, starting Improv advertising");
+    this->start_advertising_();
+    this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
+    this->service_started_ = true;
+  }
+
+  // Check authorization timeout
+  if (this->authorized_ && this->authorized_start_ > 0) {
+    if (millis() - this->authorized_start_ > this->authorized_duration_) {
+      ESP_LOGI(TAG, "Authorization expired");
+      this->authorized_ = false;
+      this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
+    }
+  }
+
+  // Check WiFi connection progress
+  if (this->wifi_connect_running_) {
+    this->check_wifi_connection_();
+  }
+}
+
+void NimBLEImprov::dump_config() {
+  ESP_LOGCONFIG(TAG, "NimBLE Improv:");
+  ESP_LOGCONFIG(TAG, "  Authorized Duration: %u ms", this->authorized_duration_);
+  ESP_LOGCONFIG(TAG, "  WiFi Timeout: %u ms", this->wifi_timeout_);
 }
 
 void NimBLEImprov::start_advertising_() {
