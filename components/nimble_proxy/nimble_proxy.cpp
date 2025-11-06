@@ -286,9 +286,9 @@ void NimBLEProxy::start_advertising_() {
   static char device_name[32];
   std::string name_base = App.get_name();
 
-  // Get last 3 bytes (6 hex chars) of MAC address
+  // Get last 3 bytes (6 hex chars) of WiFi MAC address (not BT MAC)
   uint8_t addr[6];
-  int rc_addr = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr, nullptr);
+  int rc_addr = esp_read_mac(addr, ESP_MAC_WIFI_STA);
 
   // If we have service UUIDs (like Improv), we need a shorter name to fit in 31 bytes
   // Calculation: Flags(3) + Name(2+N) + UUID128(18) = 23+N bytes
