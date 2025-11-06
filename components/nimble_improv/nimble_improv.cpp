@@ -67,14 +67,14 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
                 // Error State characteristic (read)
                 .uuid = &IMPROV_ERROR_UUID.u,
                 .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = nullptr,
             },
             {
                 // RPC Command characteristic (write)
                 .uuid = &IMPROV_RPC_COMMAND_UUID.u,
                 .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_WRITE,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
                 .val_handle = nullptr,
             },
             {
@@ -263,8 +263,17 @@ void NimBLEImprov::set_error_(ImprovError error) {
   this->error_ = error;
   ESP_LOGD(TAG, "Error set to: %d", error);
 
-  // Error characteristic is read-only, not notified
-  // Client will read it when needed
+  // Notify error characteristic if we have a connection and handle
+  if (this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->error_handle_ != 0) {
+    uint8_t val = static_cast<uint8_t>(this->error_);
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
+    if (om != nullptr) {
+      int rc = ble_gatts_notify_custom(this->conn_handle_, this->error_handle_, om);
+      if (rc != 0) {
+        ESP_LOGW(TAG, "Failed to notify error: %d", rc);
+      }
+    }
+  }
 }
 
 void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
