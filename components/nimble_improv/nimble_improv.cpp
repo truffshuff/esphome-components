@@ -436,9 +436,18 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
 
   const ble_uuid_t *uuid = ctxt->chr->uuid;
 
+  // Handle CCCD (notification enable/disable) for all characteristics
+  // This is needed before characteristic-specific handling
+  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC || ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC) {
+    // CCCD operations - allow client to enable/disable notifications
+    // NimBLE handles the actual CCCD storage, we just need to not return an error
+    ESP_LOGD(TAG, "CCCD access for characteristic");
+    return 0;
+  }
+
   // Determine which characteristic is being accessed
   if (ble_uuid_cmp(uuid, &IMPROV_STATUS_UUID.u) == 0) {
-    // Status characteristic (read)
+    // Status characteristic (read + notify)
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       uint8_t state = static_cast<uint8_t>(global_nimble_improv->state_);
       int rc = os_mbuf_append(ctxt->om, &state, sizeof(state));
@@ -483,6 +492,8 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     }
   }
 
+  // Log unhandled operations for debugging
+  ESP_LOGW(TAG, "Unhandled GATT operation: %d for characteristic", ctxt->op);
   return BLE_ATT_ERR_UNLIKELY;
 }
 
