@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
+#include "esphome/components/nimble_proxy/nimble_proxy.h"
 
 namespace esphome {
 namespace nimble_improv {
@@ -68,34 +69,31 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
 
 NimBLEImprov::NimBLEImprov() {
   global_nimble_improv = this;
+
+  // Register Improv GATT services with nimble_proxy
+  // This happens at construction time, before nimble_proxy's setup()
+  ESP_LOGI(TAG, "Registering Improv GATT services with nimble_proxy");
+  nimble_proxy::NimBLEProxy::register_gatt_services(improv_gatt_svcs);
 }
 
 void NimBLEImprov::setup() {
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
-  ESP_LOGI(TAG, "Waiting for NimBLE stack initialization by nimble_proxy");
+  ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
   this->set_state_(IMPROV_STATE_STOPPED);
 }
 
 void NimBLEImprov::loop() {
-  // Register services and start advertising once NimBLE is synced (one-time check)
+  // Get characteristic handles and start advertising once NimBLE is synced (one-time check)
   if (!this->service_started_ && ble_hs_synced()) {
-    ESP_LOGI(TAG, "NimBLE host synced, registering Improv GATT services");
+    ESP_LOGI(TAG, "NimBLE host synced, setting up Improv service");
 
-    // Register GATT services at runtime using ble_gatts_register_svcs()
-    // This works after the host has started, unlike ble_gatts_add_svcs()
-    int rc = ble_gatts_register_svcs(improv_gatt_svcs, nullptr, nullptr);
-    if (rc != 0) {
-      ESP_LOGE(TAG, "ble_gatts_register_svcs failed: %d", rc);
-      return;
-    }
-
-    ESP_LOGI(TAG, "GATT services registered successfully via ble_gatts_register_svcs()");
-
-    // Get characteristic value handles
-    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
+    // Get characteristic value handles (services were registered by nimble_proxy during setup)
+    int rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
                             nullptr, &this->status_handle_);
     if (rc == 0) {
       ESP_LOGD(TAG, "Status characteristic handle: %d", this->status_handle_);
+    } else {
+      ESP_LOGE(TAG, "Failed to find Status characteristic: %d", rc);
     }
 
     rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_ERROR_UUID.u,

@@ -36,6 +36,11 @@ class NimBLEProxy : public Component {
   void set_active(bool active) { this->active_ = active; }
   void set_max_connections(uint8_t max_connections) { this->max_connections_ = max_connections; }
 
+  // Allow external components (like nimble_improv) to register GATT services
+  // Must be called BEFORE setup() runs (use static registration)
+  static void register_gatt_services(const struct ble_gatt_svc_def *services);
+  static std::vector<const struct ble_gatt_svc_def *> &get_additional_services();
+
   // API integration methods for Home Assistant connectivity
   void *get_api_connection() {
     std::lock_guard<std::mutex> lock(this->api_connection_mutex_);

@@ -43,6 +43,9 @@ static const char *const TAG = "nimble_proxy";
 // Static pointer for callbacks
 static NimBLEProxy *global_nimble_proxy = nullptr;
 
+// Static storage for additional GATT services registered by other components
+static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
+
 }  // namespace nimble_proxy
 
 // Create the global_bluetooth_proxy pointer in the bluetooth_proxy namespace
@@ -53,6 +56,16 @@ namespace bluetooth_proxy {
 }
 
 namespace nimble_proxy {
+
+// Static methods for external service registration
+void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services) {
+  additional_gatt_services.push_back(services);
+  ESP_LOGI(TAG, "Registered additional GATT services (%d total)", additional_gatt_services.size());
+}
+
+std::vector<const struct ble_gatt_svc_def *> &NimBLEProxy::get_additional_services() {
+  return additional_gatt_services;
+}
 
 void NimBLEProxy::setup() {
   ESP_LOGI(TAG, "NimBLEProxy::setup() called on instance %p", this);
@@ -117,6 +130,25 @@ void NimBLEProxy::setup() {
   int rc = ble_svc_gap_device_name_set("ESPHome NimBLE Proxy");
   if (rc != 0) {
     ESP_LOGE(TAG, "Error setting device name: %d", rc);
+  }
+
+  // Register any additional GATT services (e.g., from nimble_improv)
+  if (!additional_gatt_services.empty()) {
+    ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
+    for (const auto *services : additional_gatt_services) {
+      rc = ble_gatts_count_cfg(services);
+      if (rc != 0) {
+        ESP_LOGE(TAG, "ble_gatts_count_cfg failed for additional service: %d", rc);
+        continue;
+      }
+
+      rc = ble_gatts_add_svcs(services);
+      if (rc != 0) {
+        ESP_LOGE(TAG, "ble_gatts_add_svcs failed for additional service: %d", rc);
+      } else {
+        ESP_LOGI(TAG, "Successfully registered additional GATT service");
+      }
+    }
   }
 
   // Start NimBLE host task (only once)
