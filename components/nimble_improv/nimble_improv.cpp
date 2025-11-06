@@ -4,6 +4,10 @@
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/nimble_proxy/nimble_proxy.h"
 #include <algorithm>  // for std::min
+#include <cstring>
+
+// Unique key for NVS storage (any non-zero 32-bit value)
+static constexpr uint32_t PREF_ID_WIFI = 0x9B5A7C21;
 
 namespace esphome {
 namespace nimble_improv {
@@ -127,9 +131,44 @@ NimBLEImprov::NimBLEImprov() {
 }
 
 void NimBLEImprov::setup() {
+  // Prepare preference handle and try loading saved creds on boot
+  this->pref_creds_ = global_preferences->make_preference<StoredWiFi>(PREF_ID_WIFI);
+  this->load_saved_credentials_();
+
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
   ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
   this->set_state_(IMPROV_STATE_STOPPED);
+}
+
+// Persist credentials to NVS
+void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string &password) {
+  StoredWiFi rec{};
+  rec.version = 1;
+  std::strncpy(rec.ssid, ssid.c_str(), sizeof(rec.ssid) - 1);
+  std::strncpy(rec.password, password.c_str(), sizeof(rec.password) - 1);
+  bool ok = this->pref_creds_.save(&rec);
+  ESP_LOGI(TAG, "Saved WiFi credentials to NVS: %s", ok ? "OK" : "FAIL");
+}
+
+// Load credentials from NVS and switch to them
+void NimBLEImprov::load_saved_credentials_() {
+  StoredWiFi rec{};
+  if (!this->pref_creds_.load(&rec)) {
+    ESP_LOGD(TAG, "No saved WiFi credentials found in NVS");
+    return;
+  }
+  if (rec.version != 1 || rec.ssid[0] == '\0') {
+    ESP_LOGW(TAG, "Saved WiFi credentials invalid");
+    return;
+  }
+
+  wifi::WiFiAP ap;
+  ap.set_ssid(rec.ssid);
+  ap.set_password(rec.password);
+
+  // Apply immediately so device prefers saved creds on boot
+  ESP_LOGI(TAG, "Loaded saved WiFi credentials for SSID '%s' from NVS", rec.ssid);
+  wifi::global_wifi_component->start_connecting(ap, false);
 }
 
 void NimBLEImprov::loop() {
@@ -417,7 +456,6 @@ void NimBLEImprov::check_wifi_connection_() {
   if (!this->wifi_connect_running_)
     return;
 
-  // Check timeout
   if (millis() - this->wifi_connect_start_ > this->wifi_timeout_) {
     ESP_LOGW(TAG, "WiFi connection timeout");
     this->set_error_(ERROR_UNABLE_TO_CONNECT);
@@ -426,19 +464,21 @@ void NimBLEImprov::check_wifi_connection_() {
     return;
   }
 
-  // Check if connected
   if (wifi::global_wifi_component->is_connected()) {
     ESP_LOGI(TAG, "WiFi connected successfully!");
     this->set_state_(IMPROV_STATE_PROVISIONED);
     this->wifi_connect_running_ = false;
 
-    // Send success response with redirect URL (LP string) on RPC Result
+    // Persist new creds so they survive reboot
+    this->save_credentials_(this->incoming_ssid_, this->incoming_password_);
+
+    // Send success response with redirect URL
     auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
     std::string redirect_url = "http://";
     if (!ip_addresses.empty()) {
       redirect_url += ip_addresses[0].str();
     } else {
-      redirect_url += "192.168.1.1";  // Fallback
+      redirect_url += "192.168.1.1";
     }
     redirect_url += "/";
 
@@ -446,11 +486,9 @@ void NimBLEImprov::check_wifi_connection_() {
     uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, redirect_url.size()));
     response.push_back(n);
     response.insert(response.end(), redirect_url.begin(), redirect_url.begin() + n);
-
     this->send_response_(response);
 
     this->set_error_(ERROR_NONE);
-    // TODO: Save credentials to flash
   }
 }
 

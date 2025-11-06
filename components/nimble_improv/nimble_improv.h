@@ -86,6 +86,14 @@ enum ImprovError : uint8_t {
   ERROR_UNKNOWN = 0xFF,
 };
 
+// Stored WiFi creds in NVS (fixed-size, simple version byte)
+struct StoredWiFi {
+  char ssid[33];
+  char password[65];
+  uint8_t version;
+  uint8_t pad[3];
+};
+
 class NimBLEImprov : public Component {
  public:
   NimBLEImprov();
@@ -127,6 +135,8 @@ class NimBLEImprov : public Component {
   void start_wifi_connect_(const std::string &ssid, const std::string &password);
   void check_wifi_connection_();
   void send_response_(const std::vector<uint8_t> &data);
+  void save_credentials_(const std::string &ssid, const std::string &password);
+  void load_saved_credentials_();
 
   // State management
   ImprovState state_{IMPROV_STATE_STOPPED};
@@ -157,6 +167,9 @@ class NimBLEImprov : public Component {
 
   // Service state
   bool service_started_{false};
+
+  // NVS preferences handle
+  ESPPreferenceObject pref_creds_;
 };
 
 }  // namespace nimble_improv
