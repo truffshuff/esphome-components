@@ -141,8 +141,8 @@ void NimBLEImprov::setup() {
 }
 
 float NimBLEImprov::get_setup_priority() const {
-  // Run before WiFi initializes
-  return 1000.0f;
+  // Run before WiFi initializes (WiFi is ~200)
+  return 150.0f;
 }
 
 // Persist credentials to NVS
@@ -154,12 +154,11 @@ void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string 
   bool ok = this->pref_creds_.save(&rec);
   ESP_LOGI(TAG, "Saved WiFi credentials to NVS: %s", ok ? "OK" : "FAIL");
 
-  // Replace STA list immediately so reconnection prefers the new network
+  // Replace STA with the newly provisioned network
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);
-  std::vector<wifi::WiFiAP> nets{ap};
-  wifi::global_wifi_component->set_sta(nets);
+  wifi::global_wifi_component->set_sta(ap);
 }
 
 // Load credentials from NVS and switch to them
@@ -174,12 +173,11 @@ void NimBLEImprov::load_saved_credentials_() {
     return;
   }
 
-  // Overwrite STA list before WiFi setup runs
+  // Overwrite STA before WiFi starts so YAML entries don't take precedence
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);
-  std::vector<wifi::WiFiAP> nets{ap};
-  wifi::global_wifi_component->set_sta(nets);
+  wifi::global_wifi_component->set_sta(ap);
 
   ESP_LOGI(TAG, "Loaded saved WiFi credentials for SSID '%s' from NVS", rec.ssid);
 }
