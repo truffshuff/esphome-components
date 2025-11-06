@@ -117,8 +117,8 @@ void NimBLEImprov::loop() {
 
   // Check if connection was lost
   if (this->service_started_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE) {
-    struct ble_hs_conn *conn;
-    if (ble_hs_conn_find(this->conn_handle_, &conn) != 0) {
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(this->conn_handle_, &desc) != 0) {
       // Connection no longer exists
       ESP_LOGI(TAG, "BLE connection lost: handle=%d", this->conn_handle_);
       this->conn_handle_ = BLE_HS_CONN_HANDLE_NONE;
