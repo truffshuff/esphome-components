@@ -172,7 +172,15 @@ void NimBLEProxy::on_sync_() {
 
   if (global_nimble_proxy != nullptr) {
     global_nimble_proxy->initialized_ = true;
-    // Start scanning instead of advertising for BLE proxy functionality
+
+    // If we have advertising service UUIDs (e.g., Improv), start advertising
+    // Otherwise just scan (normal BLE proxy behavior)
+    if (!advertising_service_uuids.empty()) {
+      ESP_LOGI(TAG, "Starting advertising (registered services detected)");
+      global_nimble_proxy->start_advertising_();
+    }
+
+    // Always start scanning for BLE proxy functionality
     global_nimble_proxy->start_scan_();
   }
 }
@@ -278,8 +286,15 @@ void NimBLEProxy::start_advertising_() {
   fields.name_is_complete = 1;
 
   // Add any registered 128-bit service UUIDs (e.g., Improv WiFi)
+  // NimBLE expects an array of ble_uuid128_t structs, not pointers
+  // Create a temporary array on the stack
   if (!advertising_service_uuids.empty()) {
-    fields.uuids128 = const_cast<ble_uuid128_t *>(advertising_service_uuids[0]);
+    // Allocate array of UUID structs (not pointers)
+    ble_uuid128_t uuid_array[advertising_service_uuids.size()];
+    for (size_t i = 0; i < advertising_service_uuids.size(); i++) {
+      uuid_array[i] = *advertising_service_uuids[i];
+    }
+    fields.uuids128 = uuid_array;
     fields.num_uuids128 = advertising_service_uuids.size();
     fields.uuids128_is_complete = 1;
     ESP_LOGI(TAG, "Including %d 128-bit service UUID(s) in advertising", advertising_service_uuids.size());
