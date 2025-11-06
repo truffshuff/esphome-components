@@ -282,20 +282,22 @@ void NimBLEProxy::start_advertising_() {
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
   // Build device name: "Halo-XXXXXX" where XXXXXX is last 6 hex digits of MAC
-  std::string device_name = App.get_name();
+  // IMPORTANT: Use static storage so the pointer remains valid after function returns
+  static char device_name[32];
+  std::string name_base = App.get_name();
 
-  // Get last 6 chars of MAC address (format: "XX:XX:XX:XX:XX:XX")
+  // Get last 6 chars of MAC address
   uint8_t addr[6];
   int rc_addr = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr, nullptr);
   if (rc_addr == 0) {
-    char mac_suffix[7];
-    snprintf(mac_suffix, sizeof(mac_suffix), "%02X%02X%02X", addr[3], addr[4], addr[5]);
-    device_name += "-";
-    device_name += mac_suffix;
+    snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
+             name_base.c_str(), addr[3], addr[4], addr[5]);
+  } else {
+    snprintf(device_name, sizeof(device_name), "%s", name_base.c_str());
   }
 
-  fields.name = (uint8_t *) device_name.c_str();
-  fields.name_len = device_name.length();
+  fields.name = (uint8_t *) device_name;
+  fields.name_len = strlen(device_name);
   fields.name_is_complete = 1;
 
   int rc = ble_gap_adv_set_fields(&fields);
