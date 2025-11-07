@@ -278,7 +278,7 @@ int NimBLEProxy::scan_callback_(struct ble_gap_event *event, void *arg) {
   struct ble_gap_disc_desc *disc = &event->disc;
 
   // Log discovered device
-  ESP_LOGD(TAG, "Device found: %02x:%02x:%02x:%02x:%02x:%02x RSSI=%d",
+  ESP_LOGV(TAG, "Device found: %02x:%02x:%02x:%02x:%02x:%02x RSSI=%d",
            disc->addr.val[5], disc->addr.val[4], disc->addr.val[3],
            disc->addr.val[2], disc->addr.val[1], disc->addr.val[0],
            disc->rssi);
