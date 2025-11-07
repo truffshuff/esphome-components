@@ -28,6 +28,7 @@ namespace nimble_proxy {
 
 class NimBLEProxy : public Component {
  public:
+  NimBLEProxy();
   void setup() override;
   void loop() override;
   void dump_config() override;
