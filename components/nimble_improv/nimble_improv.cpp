@@ -275,51 +275,6 @@ void NimBLEImprov::dump_config() {
   ESP_LOGCONFIG(TAG, "  WiFi Timeout: %u ms", this->wifi_timeout_);
 }
 
-// Advertising not needed - nimble_proxy handles advertising
-// The Improv service is available via nimble_proxy's existing advertising
-/*
-void NimBLEImprov::start_advertising_() {
-  struct ble_gap_adv_params adv_params;
-  struct ble_hs_adv_fields fields;
-
-  // Configure advertising parameters
-  memset(&adv_params, 0, sizeof(adv_params));
-  adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;  // Undirected connectable
-  adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;  // General discoverable
-
-  // Set advertising data
-  memset(&fields, 0, sizeof(fields));
-  fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-
-  // Add Improv service UUID to advertisement
-  fields.uuids128 = (ble_uuid128_t[]){IMPROV_SERVICE_UUID};
-  fields.num_uuids128 = 1;
-  fields.uuids128_is_complete = 1;
-
-  // Set device name
-  const char *device_name = "Halo Improv";
-  fields.name = (uint8_t *)device_name;
-  fields.name_len = strlen(device_name);
-  fields.name_is_complete = 1;
-
-  int rc = ble_gap_adv_set_fields(&fields);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d", rc);
-    return;
-  }
-
-  // Start advertising
-  rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, nullptr, BLE_HS_FOREVER,
-                         &adv_params, NimBLEImprov::gap_event_handler, this);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
-    return;
-  }
-
-  ESP_LOGI(TAG, "BLE advertising started");
-}
-*/
-
 void NimBLEImprov::stop_service_() {
   ESP_LOGI(TAG, "Stopping Improv BLE service");
 
@@ -553,7 +508,7 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   }
 
   // Log all access attempts for debugging
-  ESP_LOGD(TAG, "GATT access: conn=%d attr=%d op=%d", conn_handle, attr_handle, ctxt->op);
+  ESP_LOGV(TAG, "GATT access: conn=%d attr=%d op=%d", conn_handle, attr_handle, ctxt->op);
 
   const ble_uuid_t *uuid = ctxt->chr->uuid;
 
@@ -562,41 +517,41 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC || ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC) {
     // CCCD operations - allow client to enable/disable notifications
     // NimBLE handles the actual CCCD storage, we just need to not return an error
-    ESP_LOGI(TAG, "CCCD %s operation", ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "read" : "write");
+    ESP_LOGD(TAG, "CCCD %s operation", ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "read" : "write");
     return 0;
   }
 
   // Determine which characteristic is being accessed
   if (ble_uuid_cmp(uuid, &IMPROV_STATUS_UUID.u) == 0) {
     // Status characteristic (read + notify)
-    ESP_LOGI(TAG, "Status characteristic access, op=%d", ctxt->op);
+    ESP_LOGD(TAG, "Status characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       uint8_t state = static_cast<uint8_t>(global_nimble_improv->state_);
-      ESP_LOGI(TAG, "Returning status: %d", state);
+      ESP_LOGD(TAG, "Returning status: %d", state);
       int rc = os_mbuf_append(ctxt->om, &state, sizeof(state));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_ERROR_UUID.u) == 0) {
     // Error characteristic (read)
-    ESP_LOGI(TAG, "Error characteristic access, op=%d", ctxt->op);
+    ESP_LOGD(TAG, "Error characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       uint8_t error = static_cast<uint8_t>(global_nimble_improv->error_);
-      ESP_LOGI(TAG, "Returning error: %d", error);
+      ESP_LOGD(TAG, "Returning error: %d", error);
       int rc = os_mbuf_append(ctxt->om, &error, sizeof(error));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_RPC_COMMAND_UUID.u) == 0) {
     // RPC Command characteristic (write)
-    ESP_LOGI(TAG, "RPC Command characteristic access, op=%d", ctxt->op);
+    ESP_LOGD(TAG, "RPC Command characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
       // Extract command data from mbuf
       uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
       std::vector<uint8_t> data(om_len);
       int rc = ble_hs_mbuf_to_flat(ctxt->om, data.data(), om_len, nullptr);
       if (rc == 0) {
-        ESP_LOGI(TAG, "Processing RPC command, length=%d", om_len);
+        ESP_LOGD(TAG, "Processing RPC command, length=%d", om_len);
         global_nimble_improv->process_command_(data);
       }
       return 0;
@@ -604,7 +559,7 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_RPC_RESULT_UUID.u) == 0) {
     // RPC Result characteristic (read - but typically sent via notify)
-    ESP_LOGI(TAG, "RPC Result characteristic access, op=%d", ctxt->op);
+    ESP_LOGV(TAG, "RPC Result characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       // Return empty data - results are sent via notifications
       return 0;
@@ -612,13 +567,13 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   }
   else if (ble_uuid_cmp(uuid, &IMPROV_CAPABILITIES_UUID.u) == 0) {
     // Capabilities characteristic (read)
-    ESP_LOGI(TAG, "Capabilities characteristic access, op=%d", ctxt->op);
+    ESP_LOGD(TAG, "Capabilities characteristic access, op=%d", ctxt->op);
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       // Capability bitmask:
       // Bit 0 (0x01) = Identify capability
       // Setting bit 0 to indicate we support the Identify command
       uint8_t capabilities = 0x01;  // Support Identify
-      ESP_LOGI(TAG, "Returning capabilities: 0x%02x", capabilities);
+      ESP_LOGV(TAG, "Returning capabilities: 0x%02x", capabilities);
       int rc = os_mbuf_append(ctxt->om, &capabilities, sizeof(capabilities));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
@@ -630,75 +585,6 @@ int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   ESP_LOGW(TAG, "Unhandled GATT operation: op=%d for UUID=%s", ctxt->op, uuid_str);
   return BLE_ATT_ERR_UNLIKELY;
 }
-
-// NimBLE GAP event handler (static)
-// Gap event handler not needed - nimble_proxy handles advertising
-// Connection tracking happens via characteristic access callbacks and loop() polling
-/*
-int NimBLEImprov::gap_event_handler(struct ble_gap_event *event, void *arg) {
-  NimBLEImprov *instance = static_cast<NimBLEImprov*>(arg);
-  if (instance == nullptr) {
-    instance = global_nimble_improv;
-  }
-  if (instance == nullptr) {
-    return 0;
-  }
-
-  switch (event->type) {
-    case BLE_GAP_EVENT_CONNECT:
-      ESP_LOGI(TAG, "BLE GAP EVENT: Connect; status=%d conn_handle=%d",
-               event->connect.status, event->connect.conn_handle);
-
-      if (event->connect.status == 0) {
-        // Connection established
-        instance->conn_handle_ = event->connect.conn_handle;
-
-        // Grant authorization if authorizer is not used
-        if (instance->authorizer_ == nullptr) {
-          instance->authorized_ = true;
-          instance->authorized_start_ = millis();
-          instance->set_state_(IMPROV_STATE_AUTHORIZED);
-          ESP_LOGI(TAG, "Auto-authorized (no authorizer configured)");
-        } else {
-          // Wait for external authorization
-          instance->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-        }
-      } else {
-        // Connection failed, restart advertising
-        instance->start_advertising_();
-      }
-      break;
-
-    case BLE_GAP_EVENT_DISCONNECT:
-      ESP_LOGI(TAG, "BLE GAP EVENT: Disconnect; reason=%d conn_handle=%d",
-               event->disconnect.reason, event->disconnect.conn.conn_handle);
-
-      instance->conn_handle_ = BLE_HS_CONN_HANDLE_NONE;
-      instance->authorized_ = false;
-      instance->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-
-      // Restart advertising
-      instance->start_advertising_();
-      break;
-
-    case BLE_GAP_EVENT_ADV_COMPLETE:
-      ESP_LOGD(TAG, "BLE GAP EVENT: Advertising complete");
-      // Restart advertising if stopped
-      instance->start_advertising_();
-      break;
-
-    case BLE_GAP_EVENT_SUBSCRIBE:
-      ESP_LOGD(TAG, "BLE GAP EVENT: Subscribe; conn_handle=%d attr_handle=%d",
-               event->subscribe.conn_handle, event->subscribe.attr_handle);
-      break;
-
-    default:
-      break;
-  }
-
-  return 0;
-}
-*/
 
 // Device Information Service characteristic access callback
 int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,

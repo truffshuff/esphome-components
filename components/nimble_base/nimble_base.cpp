@@ -91,7 +91,7 @@ void NimBLEBase::setup() {
   (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
   // Initialize NimBLE port (handles controller init internally)
-  ESP_LOGD(TAG, "Calling nimble_port_init()...");
+  ESP_LOGV(TAG, "Calling nimble_port_init()...");
   esp_err_t ret = nimble_port_init();
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
@@ -103,11 +103,11 @@ void NimBLEBase::setup() {
   ble_hs_cfg.reset_cb = NimBLEBase::on_reset_;
 
   // Initialize BLE store config before starting host task
-  ESP_LOGD(TAG, "Initializing BLE store config...");
+  ESP_LOGV(TAG, "Initializing BLE store config...");
   ble_store_config_init();
 
   // Initialize GAP/GATT services before starting host task
-  ESP_LOGD(TAG, "Initializing GAP/GATT services...");
+  ESP_LOGV(TAG, "Initializing GAP/GATT services...");
   ble_svc_gap_init();
   ble_svc_gatt_init();
 
@@ -138,7 +138,7 @@ void NimBLEBase::setup() {
 
   // Start NimBLE host task (only once)
   if (!this->host_task_started_) {
-    ESP_LOGD(TAG, "Starting NimBLE host task...");
+    ESP_LOGV(TAG, "Starting NimBLE host task...");
     nimble_port_freertos_init(NimBLEBase::host_task_);
     this->host_task_started_ = true;
   }

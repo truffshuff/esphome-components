@@ -45,11 +45,6 @@ static const char *const TAG = "nimble_proxy";
 // Static pointer for callbacks
 static NimBLEProxy *global_nimble_proxy = nullptr;
 
-// COMMENTED OUT: Moved to nimble_base component
-// Static storage for additional GATT services registered by other components
-// static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
-// static std::vector<const ble_uuid128_t *> advertising_service_uuids;
-
 }  // namespace nimble_proxy
 
 // Create the global_bluetooth_proxy pointer in the bluetooth_proxy namespace
@@ -66,29 +61,10 @@ NimBLEProxy::NimBLEProxy() {
   nimble_base::NimBLEBase::register_sync_callback(&NimBLEProxy::on_sync_);
 }
 
-// COMMENTED OUT: Moved to nimble_base component
-// Static methods for external service registration
-// void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services) {
-//   additional_gatt_services.push_back(services);
-//   ESP_LOGI(TAG, "Registered additional GATT services (%d total)", additional_gatt_services.size());
-// }
-
-// std::vector<const struct ble_gatt_svc_def *> &NimBLEProxy::get_additional_services() {
-//   return additional_gatt_services;
-// }
-
-// void NimBLEProxy::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
-//   advertising_service_uuids.push_back(uuid);
-//   ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", advertising_service_uuids.size());
-// }
-
 void NimBLEProxy::setup() {
-  ESP_LOGI(TAG, "NimBLEProxy::setup() called on instance %p", this);
-  ESP_LOGI(TAG, "Setting global_nimble_proxy from %p to %p", global_nimble_proxy, this);
+  ESP_LOGD(TAG, "NimBLEProxy::setup() called on instance %p", this);
   global_nimble_proxy = this;
   bluetooth_proxy::global_bluetooth_proxy = this;
-  ESP_LOGI(TAG, "Verify global_nimble_proxy=%p, bluetooth_proxy::global=%p",
-           global_nimble_proxy, bluetooth_proxy::global_bluetooth_proxy);
 
   if (!this->active_) {
     ESP_LOGI(TAG, "NimBLE Proxy is disabled");
@@ -105,77 +81,9 @@ void NimBLEProxy::setup() {
 
   ESP_LOGI(TAG, "Setting up NimBLE Proxy...");
 
-  // COMMENTED OUT: NimBLE initialization now handled by nimble_base component
+  // NimBLE initialization is handled by nimble_base component
   // The nimble_base component must be included in the YAML configuration
   // and will run first due to setup priority (AFTER_BLUETOOTH)
-
-  // // Ensure NVS is initialized (required by Bluetooth stack)
-  // esp_err_t nvs_ret = nvs_flash_init();
-  // if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-  //   ESP_LOGW(TAG, "NVS init returned %s, erasing NVS...", esp_err_to_name(nvs_ret));
-  //   ESP_ERROR_CHECK(nvs_flash_erase());
-  //   nvs_ret = nvs_flash_init();
-  // }
-  // if (nvs_ret != ESP_OK) {
-  //   ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_ret));
-  //   return;
-  // }
-
-  // // Release Classic BT memory (ignore error if already released)
-  // (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-
-  // // Initialize NimBLE port (handles controller init internally)
-  // ESP_LOGD(TAG, "Calling nimble_port_init()...");
-  // esp_err_t ret = nimble_port_init();
-  // if (ret != ESP_OK) {
-  //   ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
-  //   return;
-  // }
-
-  // // Configure host callbacks
-  // ble_hs_cfg.sync_cb = NimBLEProxy::on_sync_;
-  // ble_hs_cfg.reset_cb = NimBLEProxy::on_reset_;
-
-  // // Initialize BLE store config before starting host task
-  // ESP_LOGD(TAG, "Initializing BLE store config...");
-  // ble_store_config_init();
-
-  // // Initialize GAP/GATT services before starting host task
-  // ESP_LOGD(TAG, "Initializing GAP/GATT services...");
-  // ble_svc_gap_init();
-  // ble_svc_gatt_init();
-
-  // // Set device name
-  // int rc = ble_svc_gap_device_name_set("ESPHome NimBLE Proxy");
-  // if (rc != 0) {
-  //   ESP_LOGE(TAG, "Error setting device name: %d", rc);
-  // }
-
-  // // Register any additional GATT services (e.g., from nimble_improv)
-  // if (!additional_gatt_services.empty()) {
-  //   ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
-  //   for (const auto *services : additional_gatt_services) {
-  //     rc = ble_gatts_count_cfg(services);
-  //     if (rc != 0) {
-  //       ESP_LOGE(TAG, "ble_gatts_count_cfg failed for additional service: %d", rc);
-  //       continue;
-  //     }
-
-  //     rc = ble_gatts_add_svcs(services);
-  //     if (rc != 0) {
-  //       ESP_LOGE(TAG, "ble_gatts_add_svcs failed for additional service: %d", rc);
-  //     } else {
-  //       ESP_LOGI(TAG, "Successfully registered additional GATT service");
-  //     }
-  //   }
-  // }
-
-  // // Start NimBLE host task (only once)
-  // if (!this->host_task_started_) {
-  //   ESP_LOGD(TAG, "Starting NimBLE host task...");
-  //   nimble_port_freertos_init(NimBLEProxy::host_task_);
-  //   this->host_task_started_ = true;
-  // }
 
   ESP_LOGI(TAG, "NimBLE Proxy setup complete (initialization handled by nimble_base)");
 }
@@ -222,7 +130,7 @@ void NimBLEProxy::host_task_(void *param) {
 
 void NimBLEProxy::start_scan_() {
   if (this->scanning_) {
-    ESP_LOGD(TAG, "Already scanning");
+    ESP_LOGV(TAG, "Already scanning");
     return;
   }
 
@@ -397,11 +305,11 @@ int NimBLEProxy::gap_event_handler_(struct ble_gap_event *event, void *arg) {
       break;
       
     case BLE_GAP_EVENT_ADV_COMPLETE:
-      ESP_LOGD(TAG, "Advertising complete");
+      ESP_LOGV(TAG, "Advertising complete");
       break;
-      
+
     case BLE_GAP_EVENT_CONN_UPDATE:
-      ESP_LOGD(TAG, "Connection updated; status=%d", event->conn_update.status);
+      ESP_LOGV(TAG, "Connection updated; status=%d", event->conn_update.status);
       break;
       
     default:
@@ -430,11 +338,10 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
     conn = this->api_connection_;
   }
 
-  // Debug: log pointer addresses every 100 advertisements
+  // Periodically log statistics for debugging
   static int adv_count = 0;
   if (++adv_count % 100 == 0) {
-    ESP_LOGD(TAG, "Add adv: this=%p, api_connection_=%p, global=%p",
-             this, conn, global_nimble_proxy);
+    ESP_LOGV(TAG, "Advertisement stats: count=%d, api_connection=%p", adv_count, conn);
   }
 
   if (conn == nullptr) {
@@ -495,7 +402,7 @@ void NimBLEProxy::send_advertisements_() {
     conn = this->api_connection_;
   }
 
-  ESP_LOGD(TAG, "Attempting to send %d advertisements (api_connection=%p)",
+  ESP_LOGV(TAG, "Attempting to send %d advertisements (api_connection=%p)",
            this->adv_buffer_count_, conn);
 
   // Cast the opaque buffer to the correct type
@@ -512,7 +419,7 @@ void NimBLEProxy::send_advertisements_() {
   // Send to the connected Home Assistant API client
   send_bluetooth_advertisements_to_client(conn, resp);
 
-  ESP_LOGD(TAG, "Sent %d advertisements to Home Assistant", this->adv_buffer_count_);
+  ESP_LOGV(TAG, "Sent %d advertisements to Home Assistant", this->adv_buffer_count_);
 
   // Reset buffer
   this->adv_buffer_count_ = 0;
@@ -636,7 +543,7 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
   {
     std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
     if (this->api_connection_ == conn) {
-      ESP_LOGD(TAG, "API connection %p already subscribed", conn);
+      ESP_LOGV(TAG, "API connection %p already subscribed", conn);
       return;
     }
 
@@ -645,8 +552,6 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
   }
 
   ESP_LOGI(TAG, "API connection %p subscribed (flags=0x%x)", conn, flags);
-  ESP_LOGD(TAG, "Verify: this=%p, api_connection_=%p, global_nimble_proxy=%p",
-           this, conn, global_nimble_proxy);
 
   // Send current scanner state to the newly subscribed connection
   if (this->initialized_) {
