@@ -118,16 +118,12 @@ class NimBLEImprov : public Component {
   // NimBLE callback handlers
   static int characteristic_access_callback(uint16_t conn_handle, uint16_t attr_handle,
                                            struct ble_gatt_access_ctxt *ctxt, void *arg);
-  // Gap event handler not needed - nimble_proxy handles advertising
-  // static int gap_event_handler(struct ble_gap_event *event, void *arg);
 
   // Accessors for callback functions (public so static callbacks can access)
   ImprovState get_state() const { return this->state_; }
   ImprovError get_error() const { return this->error_; }
 
  protected:
-  // Advertising methods not needed - nimble_proxy handles advertising
-  // void start_advertising_();
   void stop_service_();
   void set_state_(ImprovState state);
   void set_error_(ImprovError error);

@@ -19,6 +19,15 @@
 namespace esphome {
 namespace nimble_base {
 
+/**
+ * NimBLEBase - Core NimBLE initialization component
+ *
+ * Handles initialization of the ESP-IDF NimBLE Bluetooth stack, including:
+ * - NVS initialization
+ * - BLE controller and host setup
+ * - GATT service registration
+ * - Sync callback management
+ */
 class NimBLEBase : public Component {
  public:
   void setup() override;

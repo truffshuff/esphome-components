@@ -26,6 +26,15 @@
 namespace esphome {
 namespace nimble_proxy {
 
+/**
+ * NimBLEProxy - Bluetooth LE Proxy for Home Assistant
+ *
+ * Provides BLE scanning and advertising functionality for Home Assistant integration:
+ * - Scans for BLE advertisements and forwards them to Home Assistant
+ * - Supports GATT service registration for features like Improv WiFi provisioning
+ * - Manages API connections and advertisement batching
+ * - Requires nimble_base component for BLE stack initialization
+ */
 class NimBLEProxy : public Component {
  public:
   NimBLEProxy();
