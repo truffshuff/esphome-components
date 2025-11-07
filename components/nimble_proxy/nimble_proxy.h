@@ -32,7 +32,8 @@ class NimBLEProxy : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
+  // Run before nimble_base (which is at AFTER_BLUETOOTH=500)
+  float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH + 1.0f; }
 
   void set_active(bool active) { this->active_ = active; }
   void set_max_connections(uint8_t max_connections) { this->max_connections_ = max_connections; }
