@@ -42,6 +42,10 @@ class NimBLEBase : public Component {
   static std::string get_device_name_with_mac(const std::string &base_name, bool short_form = false);
   static std::string get_mac_address_pretty();
 
+  // Callback registration for sync events
+  using SyncCallback = void (*)();
+  static void register_sync_callback(SyncCallback callback);
+
  protected:
   bool initialized_{false};
   bool host_task_started_{false};

@@ -61,6 +61,11 @@ namespace bluetooth_proxy {
 
 namespace nimble_proxy {
 
+NimBLEProxy::NimBLEProxy() {
+  // Register sync callback with nimble_base so we get notified when BLE host is ready
+  nimble_base::NimBLEBase::register_sync_callback(&NimBLEProxy::on_sync_);
+}
+
 // COMMENTED OUT: Moved to nimble_base component
 // Static methods for external service registration
 // void NimBLEProxy::register_gatt_services(const struct ble_gatt_svc_def *services) {

@@ -42,6 +42,9 @@ static NimBLEBase *global_nimble_base = nullptr;
 static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
 static std::vector<const ble_uuid128_t *> advertising_service_uuids;
 
+// Static storage for sync callbacks
+static std::vector<NimBLEBase::SyncCallback> sync_callbacks;
+
 // Static methods for external service registration
 void NimBLEBase::register_gatt_services(const struct ble_gatt_svc_def *services) {
   additional_gatt_services.push_back(services);
@@ -59,6 +62,11 @@ void NimBLEBase::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
 
 std::vector<const ble_uuid128_t *> &NimBLEBase::get_advertising_service_uuids() {
   return advertising_service_uuids;
+}
+
+void NimBLEBase::register_sync_callback(SyncCallback callback) {
+  sync_callbacks.push_back(callback);
+  ESP_LOGI(TAG, "Registered sync callback (%d total)", sync_callbacks.size());
 }
 
 void NimBLEBase::setup() {
@@ -143,6 +151,13 @@ void NimBLEBase::on_sync_() {
 
   if (global_nimble_base != nullptr) {
     global_nimble_base->initialized_ = true;
+  }
+
+  // Call all registered sync callbacks
+  for (auto callback : sync_callbacks) {
+    if (callback != nullptr) {
+      callback();
+    }
   }
 }
 
