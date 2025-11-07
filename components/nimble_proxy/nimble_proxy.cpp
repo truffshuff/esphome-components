@@ -183,20 +183,30 @@ void NimBLEProxy::setup() {
 void NimBLEProxy::on_sync_() {
   ESP_LOGI(TAG, "NimBLE host synced");
 
-  if (global_nimble_proxy != nullptr) {
-    global_nimble_proxy->initialized_ = true;
-
-    // If we have advertising service UUIDs (e.g., Improv), start advertising
-    // Otherwise just scan (normal BLE proxy behavior)
-    auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
-    if (!advertising_uuids.empty()) {
-      ESP_LOGI(TAG, "Starting advertising (registered services detected)");
-      global_nimble_proxy->start_advertising_();
-    }
-
-    // Always start scanning for BLE proxy functionality
-    global_nimble_proxy->start_scan_();
+  if (global_nimble_proxy == nullptr) {
+    ESP_LOGW(TAG, "global_nimble_proxy is null in on_sync_()");
+    return;
   }
+
+  if (!global_nimble_proxy->active_) {
+    ESP_LOGI(TAG, "Proxy is not active, skipping scan/advertising");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Setting initialized flag and starting BLE operations");
+  global_nimble_proxy->initialized_ = true;
+
+  // If we have advertising service UUIDs (e.g., Improv), start advertising
+  // Otherwise just scan (normal BLE proxy behavior)
+  auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
+  if (!advertising_uuids.empty()) {
+    ESP_LOGI(TAG, "Starting advertising (%d registered service UUIDs detected)", advertising_uuids.size());
+    global_nimble_proxy->start_advertising_();
+  }
+
+  // Always start scanning for BLE proxy functionality
+  ESP_LOGI(TAG, "Starting BLE scan");
+  global_nimble_proxy->start_scan_();
 }
 
 void NimBLEProxy::on_reset_(int reason) {
