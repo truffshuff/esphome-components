@@ -5,6 +5,7 @@
 #include "esphome/components/nimble_base/nimble_base.h"
 #include <algorithm>
 #include <cstring>
+#include "esp_chip_info.h"
 
 // Unique key for NVS storage (any non-zero 32-bit value)
 static constexpr uint32_t PREF_ID_WIFI = 0x9B5A7C21;
@@ -48,7 +49,10 @@ int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
 // Standard BLE UUIDs for Device Information Service
 static const ble_uuid16_t DEVICE_INFO_SERVICE_UUID = BLE_UUID16_INIT(0x180A);
 static const ble_uuid16_t MODEL_NUMBER_UUID = BLE_UUID16_INIT(0x2A24);
+static const ble_uuid16_t SERIAL_NUMBER_UUID = BLE_UUID16_INIT(0x2A25);
 static const ble_uuid16_t FIRMWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A26);
+static const ble_uuid16_t HARDWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A27);
+static const ble_uuid16_t SOFTWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A28);
 static const ble_uuid16_t MANUFACTURER_NAME_UUID = BLE_UUID16_INIT(0x2A29);
 
 // GATT service definitions (Device Info + Improv) with correct flags
@@ -59,7 +63,22 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
         .uuid = &DEVICE_INFO_SERVICE_UUID.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
+                .uuid = &MANUFACTURER_NAME_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
                 .uuid = &MODEL_NUMBER_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = &SERIAL_NUMBER_UUID.u,
+                .access_cb = device_info_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = &HARDWARE_REVISION_UUID.u,
                 .access_cb = device_info_chr_access,
                 .flags = BLE_GATT_CHR_F_READ,
             },
@@ -69,7 +88,7 @@ static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ,
             },
             {
-                .uuid = &MANUFACTURER_NAME_UUID.u,
+                .uuid = &SOFTWARE_REVISION_UUID.u,
                 .access_cb = device_info_chr_access,
                 .flags = BLE_GATT_CHR_F_READ,
             },
@@ -687,14 +706,74 @@ int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
   const ble_uuid_t *uuid = ctxt->chr->uuid;
 
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+    // Use static storage for dynamic strings to ensure they persist
+    static std::string model_str;
+    static std::string serial_str;
+    static std::string hardware_str;
+    static std::string firmware_str;
+    static std::string software_str;
     const char *value = nullptr;
 
-    if (ble_uuid_cmp(uuid, &MODEL_NUMBER_UUID.u) == 0) {
-      value = App.get_name().c_str();
-    } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
-      value = App.get_compilation_time().c_str();
-    } else if (ble_uuid_cmp(uuid, &MANUFACTURER_NAME_UUID.u) == 0) {
+    if (ble_uuid_cmp(uuid, &MANUFACTURER_NAME_UUID.u) == 0) {
+      // Manufacturer: Your project name or "ESPHome"
+      #ifdef ESPHOME_PROJECT_NAME
+      value = ESPHOME_PROJECT_NAME;
+      #else
       value = "ESPHome";
+      #endif
+
+    } else if (ble_uuid_cmp(uuid, &MODEL_NUMBER_UUID.u) == 0) {
+      // Model: Friendly name if available, otherwise board type
+      const std::string &friendly = App.get_friendly_name();
+      if (!friendly.empty()) {
+        model_str = friendly;
+      } else {
+        #ifdef ESPHOME_BOARD
+        model_str = ESPHOME_BOARD;
+        #else
+        model_str = "ESP32";
+        #endif
+      }
+      value = model_str.c_str();
+
+    } else if (ble_uuid_cmp(uuid, &SERIAL_NUMBER_UUID.u) == 0) {
+      // Serial: Device name (unique identifier/hostname)
+      serial_str = App.get_name();
+      value = serial_str.c_str();
+
+    } else if (ble_uuid_cmp(uuid, &HARDWARE_REVISION_UUID.u) == 0) {
+      // Hardware: ESP chip info
+      #ifdef ESP32
+      esp_chip_info_t chip_info;
+      esp_chip_info(&chip_info);
+      hardware_str = "ESP32";
+      if (chip_info.model == CHIP_ESP32) {
+        hardware_str += " Rev " + std::to_string(chip_info.revision);
+      }
+      hardware_str += " (" + std::to_string(chip_info.cores) + " cores)";
+      #else
+      hardware_str = "ESP32";
+      #endif
+      value = hardware_str.c_str();
+
+    } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
+      // Firmware: Compilation date/time
+      firmware_str = App.get_compilation_time();
+      value = firmware_str.c_str();
+
+    } else if (ble_uuid_cmp(uuid, &SOFTWARE_REVISION_UUID.u) == 0) {
+      // Software: Project version or ESPHome version
+      #ifdef ESPHOME_PROJECT_VERSION
+      software_str = std::string(ESPHOME_PROJECT_VERSION);
+      #ifdef ESPHOME_VERSION
+      software_str += " (ESPHome " + std::string(ESPHOME_VERSION) + ")";
+      #endif
+      #elif defined(ESPHOME_VERSION)
+      software_str = std::string("ESPHome ") + ESPHOME_VERSION;
+      #else
+      software_str = "Unknown";
+      #endif
+      value = software_str.c_str();
     }
 
     if (value != nullptr) {
