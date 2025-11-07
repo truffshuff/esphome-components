@@ -71,6 +71,11 @@ esp32:
 # NimBLE base (required)
 nimble_base:
 
+# WiFi
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
 # API for Home Assistant
 api:
   encryption:
