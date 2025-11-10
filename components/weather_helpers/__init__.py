@@ -1,14 +1,7 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 
-DEPENDENCIES = []
+# Tell ESPHome there is a global C++ namespace
+weather_helpers_ns = cg.global_ns.namespace("weather_helpers")
 
-# Register the namespace for your helper functions
-weather_helpers_ns = cg.esphome_ns.namespace("weather_helpers")
-
-# No configuration — this is purely a code helper
-CONFIG_SCHEMA = cv.Schema({})
-
-async def to_code(config):
-    # Nothing to generate, just ensure the component is included
-    pass
+# Force inclusion of weather_helpers.cpp even though no platform is registered
+cg.add_library("weather_helpers", None)
