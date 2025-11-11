@@ -198,10 +198,10 @@ inline std::string get_weather_icon(const std::string& condition) {
     if (condition.find("windy") != std::string::npos) return "\U000F059D";
     if (condition.find("cloudy") != std::string::npos) return "\U000F0590";
     if (condition.find("sunny") != std::string::npos ||
-        condition.find("clear") != std::string::npos) return "\U000F0599";
+        condition.find("clear") != std::string::npos) return "\U000F0598";
     if (condition.find("exceptional") != std::string::npos) return "\U000F0F2F";
 
-    return "\U000F0599";  // default to sunny
+    return "\U000F0598";  // default to sunny
 }
 
 /**
