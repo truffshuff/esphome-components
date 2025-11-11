@@ -382,4 +382,59 @@ inline std::string format_hi_lo_temps(float high, float low) {
     return std::string(buf);
 }
 
+// ============================================================================
+// Hourly Summary Update Helpers
+// ============================================================================
+
+/**
+ * Format hourly summary time from datetime string array
+ * Handles timezone conversion and formatting
+ * OPTIMIZED: Uses static buffer to avoid heap allocations
+ *
+ * @param datetime_str The datetime string from weather API
+ * @param local_tz_offset Local timezone offset in seconds
+ * @return Formatted time string (HH:00) or "--:--" if invalid
+ */
+inline std::string format_hourly_summary_time(const std::string& datetime_str, int32_t local_tz_offset) {
+    if (datetime_str.empty() || datetime_str.length() < 13) {
+        return std::string("--:--");
+    }
+
+    int hour = convert_to_local_hour(datetime_str, local_tz_offset);
+    return format_hour(hour);
+}
+
+/**
+ * Get weather icon for hourly summary
+ * Simple wrapper around get_weather_icon for consistency
+ *
+ * @param condition Weather condition string
+ * @return Unicode string for Material Design weather icon
+ */
+inline std::string format_hourly_summary_icon(const std::string& condition) {
+    return get_weather_icon(condition);
+}
+
+/**
+ * Format temperature for hourly summary
+ * Simple wrapper around format_temp for consistency
+ *
+ * @param temp Temperature value
+ * @return Formatted temperature string (XX°) or "--°" if NaN
+ */
+inline std::string format_hourly_summary_temp(float temp) {
+    return format_temp(temp);
+}
+
+/**
+ * Format precipitation probability for hourly summary
+ * Simple wrapper around format_percent for consistency
+ *
+ * @param precip_prob Precipitation probability (0-100)
+ * @return Formatted percentage string (XX%) or "--%" if NaN
+ */
+inline std::string format_hourly_summary_precip(float precip_prob) {
+    return format_percent(precip_prob);
+}
+
 }  // namespace weather_helpers
