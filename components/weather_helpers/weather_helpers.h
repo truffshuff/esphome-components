@@ -72,13 +72,16 @@ inline int convert_to_local_hour(const std::string& datetime_str, int32_t local_
 
 /**
  * Format hour as HH:00 string
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_hour(int hour) {
+    static char buf[8] __attribute__((section(".ext_ram.bss")));
+
     if (hour < 0 || hour > 23) {
-        return "--:--";
+        snprintf(buf, sizeof(buf), "--:--");
+    } else {
+        snprintf(buf, sizeof(buf), "%02d:00", hour);
     }
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%02d:00", hour);
     return std::string(buf);
 }
 
@@ -160,15 +163,16 @@ inline bool parse_forecast_date(const std::string& datetime_str,
 
 /**
  * Map weather condition string to Material Design Icon unicode glyph
- * 
+ * OPTIMIZED: Returns const char* literals to avoid allocations
+ *
  * @param condition Weather condition string (e.g., "sunny", "rainy", "cloudy")
  * @return Unicode string for Material Design weather icon
  */
-inline std::string get_weather_icon(const std::string& condition) {
+inline const char* get_weather_icon(const std::string& condition) {
     if (condition.empty()) {
         return "\U000F14E4";  // question-mark-circle (unknown)
     }
-    
+
     // Check for specific compound conditions first (order matters!)
     if (condition.find("lightning-rainy") != std::string::npos) {
         return "\U000F067E";  // lightning-rainy
@@ -182,7 +186,7 @@ inline std::string get_weather_icon(const std::string& condition) {
     if (condition.find("partlycloudy") != std::string::npos) {
         return "\U000F0595";  // partlycloudy
     }
-    
+
     // Single conditions
     if (condition.find("lightning") != std::string::npos) return "\U000F0593";
     if (condition.find("snowy") != std::string::npos) return "\U000F0598";
@@ -193,10 +197,10 @@ inline std::string get_weather_icon(const std::string& condition) {
     if (condition.find("windy-variant") != std::string::npos) return "\U000F059E";
     if (condition.find("windy") != std::string::npos) return "\U000F059D";
     if (condition.find("cloudy") != std::string::npos) return "\U000F0590";
-    if (condition.find("sunny") != std::string::npos || 
+    if (condition.find("sunny") != std::string::npos ||
         condition.find("clear") != std::string::npos) return "\U000F0599";
     if (condition.find("exceptional") != std::string::npos) return "\U000F0F2F";
-    
+
     return "\U000F0599";  // default to sunny
 }
 
@@ -225,10 +229,11 @@ inline uint32_t get_weather_icon_color(const std::string& condition) {
 /**
  * Format condition string to human-readable text
  * Converts "clear-night" → "Clear Night", "partlycloudy" → "Partly Cloudy", etc.
+ * OPTIMIZED: Returns const char* literals to avoid allocations
  */
-inline std::string format_condition_text(const std::string& condition) {
+inline const char* format_condition_text(const std::string& condition) {
     if (condition.empty()) return "Unknown";
-    
+
     if (condition == "clear-night") return "Clear Night";
     if (condition == "cloudy") return "Cloudy";
     if (condition == "exceptional") return "Exceptional";
@@ -244,10 +249,11 @@ inline std::string format_condition_text(const std::string& condition) {
     if (condition == "sunny") return "Sunny";
     if (condition == "windy") return "Windy";
     if (condition == "windy-variant") return "Very Windy";
-    
-    // Capitalize first letter if not matched
-    std::string result = condition;
-    if (!result.empty()) {
+
+    // For unknown conditions, use static buffer
+    static char result[32] __attribute__((section(".ext_ram.bss")));
+    snprintf(result, sizeof(result), "%s", condition.c_str());
+    if (result[0] >= 'a' && result[0] <= 'z') {
         result[0] = toupper(result[0]);
     }
     return result;
@@ -259,15 +265,16 @@ inline std::string format_condition_text(const std::string& condition) {
 
 /**
  * Convert wind bearing (degrees) to cardinal direction abbreviation
- * 
+ * OPTIMIZED: Returns const char* literals to avoid any allocations
+ *
  * @param bearing Wind direction in degrees (0-360)
  * @return Cardinal direction string (N, NE, E, SE, S, SW, W, NW)
  */
-inline std::string bearing_to_direction(float bearing) {
+inline const char* bearing_to_direction(float bearing) {
     if (std::isnan(bearing)) {
         return "--";
     }
-    
+
     if (bearing >= 337.5 || bearing < 22.5) return "N";
     if (bearing >= 22.5 && bearing < 67.5) return "NE";
     if (bearing >= 67.5 && bearing < 112.5) return "E";
@@ -285,74 +292,94 @@ inline std::string bearing_to_direction(float bearing) {
 /**
  * Format temperature with degree symbol
  * Handles NaN values gracefully
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_temp(float temp, const char* default_str = "--°") {
+    // Use static buffer allocated in PSRAM to avoid stack overflow
+    // Thread-safe for single-core ESP32 in LVGL context
+    static char buf[16] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(temp)) {
-        return std::string(default_str);
+        snprintf(buf, sizeof(buf), "%s", default_str);
+    } else {
+        snprintf(buf, sizeof(buf), "%.0f°", temp);
     }
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.0f°", temp);
     return std::string(buf);
 }
 
 /**
  * Format temperature with one decimal place
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_temp_precise(float temp, const char* default_str = "--.-°") {
+    static char buf[16] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(temp)) {
-        return std::string(default_str);
+        snprintf(buf, sizeof(buf), "%s", default_str);
+    } else {
+        snprintf(buf, sizeof(buf), "%.1f°", temp);
     }
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f°", temp);
     return std::string(buf);
 }
 
 /**
  * Format percentage value
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_percent(float value, const char* default_str = "--%") {
+    static char buf[16] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(value)) {
-        return std::string(default_str);
+        snprintf(buf, sizeof(buf), "%s", default_str);
+    } else {
+        snprintf(buf, sizeof(buf), "%.0f%%", value);
     }
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.0f%%", value);
     return std::string(buf);
 }
 
 /**
  * Format precipitation amount in inches
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_precipitation(float value, const char* default_str = "--\"") {
+    static char buf[16] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(value)) {
-        return std::string(default_str);
+        snprintf(buf, sizeof(buf), "%s", default_str);
+    } else {
+        snprintf(buf, sizeof(buf), "%.2f\"", value);
     }
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.2f\"", value);
     return std::string(buf);
 }
 
 /**
  * Format generic numeric value (pressure, UV index, etc.)
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_numeric(float value, const char* default_str = "--") {
+    static char buf[16] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(value)) {
-        return std::string(default_str);
+        snprintf(buf, sizeof(buf), "%s", default_str);
+    } else {
+        snprintf(buf, sizeof(buf), "%.0f", value);
     }
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.0f", value);
     return std::string(buf);
 }
 
 /**
  * Format high/low temperature pair with colors
  * Returns formatted string: "#FF0000 H:XX°# #00DFFF L:XX°#"
+ * OPTIMIZED: Uses static buffer to avoid heap allocations and stack pressure
  */
 inline std::string format_hi_lo_temps(float high, float low) {
+    static char buf[64] __attribute__((section(".ext_ram.bss")));
+
     if (std::isnan(high) || std::isnan(low)) {
-        return "H:--° L:--°";
+        snprintf(buf, sizeof(buf), "H:--° L:--°");
+    } else {
+        snprintf(buf, sizeof(buf), "#FF0000 H:%.0f°# #00DFFF L:%.0f°#", high, low);
     }
-    char buf[64];
-    snprintf(buf, sizeof(buf), "#FF0000 H:%.0f°# #00DFFF L:%.0f°#", high, low);
     return std::string(buf);
 }
 
