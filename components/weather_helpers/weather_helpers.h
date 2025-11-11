@@ -163,12 +163,12 @@ inline bool parse_forecast_date(const std::string& datetime_str,
 
 /**
  * Map weather condition string to Material Design Icon unicode glyph
- * OPTIMIZED: Returns const char* literals to avoid allocations
+ * OPTIMIZED: Returns string literals (no heap allocation)
  *
  * @param condition Weather condition string (e.g., "sunny", "rainy", "cloudy")
  * @return Unicode string for Material Design weather icon
  */
-inline const char* get_weather_icon(const std::string& condition) {
+inline std::string get_weather_icon(const std::string& condition) {
     if (condition.empty()) {
         return "\U000F14E4";  // question-mark-circle (unknown)
     }
@@ -229,9 +229,9 @@ inline uint32_t get_weather_icon_color(const std::string& condition) {
 /**
  * Format condition string to human-readable text
  * Converts "clear-night" → "Clear Night", "partlycloudy" → "Partly Cloudy", etc.
- * OPTIMIZED: Returns const char* literals to avoid allocations
+ * OPTIMIZED: Returns string literals (no heap allocation for common conditions)
  */
-inline const char* format_condition_text(const std::string& condition) {
+inline std::string format_condition_text(const std::string& condition) {
     if (condition.empty()) return "Unknown";
 
     if (condition == "clear-night") return "Clear Night";
@@ -250,10 +250,9 @@ inline const char* format_condition_text(const std::string& condition) {
     if (condition == "windy") return "Windy";
     if (condition == "windy-variant") return "Very Windy";
 
-    // For unknown conditions, use static buffer
-    static char result[32] __attribute__((section(".ext_ram.bss")));
-    snprintf(result, sizeof(result), "%s", condition.c_str());
-    if (result[0] >= 'a' && result[0] <= 'z') {
+    // For unknown conditions, capitalize first letter
+    std::string result = condition;
+    if (!result.empty() && result[0] >= 'a' && result[0] <= 'z') {
         result[0] = toupper(result[0]);
     }
     return result;
@@ -265,12 +264,12 @@ inline const char* format_condition_text(const std::string& condition) {
 
 /**
  * Convert wind bearing (degrees) to cardinal direction abbreviation
- * OPTIMIZED: Returns const char* literals to avoid any allocations
+ * OPTIMIZED: Returns string literals (no heap allocation)
  *
  * @param bearing Wind direction in degrees (0-360)
  * @return Cardinal direction string (N, NE, E, SE, S, SW, W, NW)
  */
-inline const char* bearing_to_direction(float bearing) {
+inline std::string bearing_to_direction(float bearing) {
     if (std::isnan(bearing)) {
         return "--";
     }
