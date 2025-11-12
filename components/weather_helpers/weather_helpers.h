@@ -191,17 +191,13 @@ inline std::string get_weather_icon(const std::string& condition) {
     if (condition.find("lightning") != std::string::npos) return "\U000F0593";
     if (condition.find("snowy") != std::string::npos) return "\U000F0598";
     if (condition.find("rainy") != std::string::npos) return "\U000F0597";
-    if (condition.find("pouring") != std::string::npos) return "\U000F0596";
-    if (condition.find("hail") != std::string::npos) return "\U000F0592";
     if (condition.find("fog") != std::string::npos) return "\U000F0591";
-    if (condition.find("windy-variant") != std::string::npos) return "\U000F059E";
     if (condition.find("windy") != std::string::npos) return "\U000F059D";
     if (condition.find("cloudy") != std::string::npos) return "\U000F0590";
     if (condition.find("sunny") != std::string::npos ||
-        condition.find("clear") != std::string::npos) return "\U000F0598";
-    if (condition.find("exceptional") != std::string::npos) return "\U000F0F2F";
+        condition.find("clear") != std::string::npos) return "\U000F0599";
 
-    return "\U000F0598";  // default to sunny
+    return "\U000F14E4";  // default to sunny-off
 }
 
 /**
@@ -217,8 +213,7 @@ inline uint32_t get_weather_icon_color(const std::string& condition) {
         condition.find("lightning") != std::string::npos) return 0xFF1493;  // Deep Pink
     if (condition.find("partlycloudy") != std::string::npos) return 0x87CEFA;  // Light Sky Blue
     if (condition.find("cloudy") != std::string::npos) return 0xA9A9A9;  // Dark Gray
-    if (condition.find("rainy") != std::string::npos || 
-        condition.find("pouring") != std::string::npos) return 0x4169E1;  // Royal Blue
+    if (condition.find("rainy") != std::string::npos return 0x4169E1;  // Royal Blue
     if (condition.find("snowy") != std::string::npos) return 0xDCDCDC;  // Gainsboro
     if (condition.find("fog") != std::string::npos) return 0xB0C4DE;  // Light Steel Blue
     if (condition.find("windy") != std::string::npos) return 0x90EE90;  // Light Green
@@ -236,19 +231,15 @@ inline std::string format_condition_text(const std::string& condition) {
 
     if (condition == "clear-night") return "Clear Night";
     if (condition == "cloudy") return "Cloudy";
-    if (condition == "exceptional") return "Exceptional";
     if (condition == "fog") return "Fog";
-    if (condition == "hail") return "Hail";
     if (condition == "lightning") return "Lightning";
     if (condition == "lightning-rainy") return "Lightning & Rain";
     if (condition == "partlycloudy") return "Partly Cloudy";
-    if (condition == "pouring") return "Pouring";
     if (condition == "rainy") return "Rainy";
     if (condition == "snowy") return "Snowy";
     if (condition == "snowy-rainy") return "Sleet";
     if (condition == "sunny") return "Sunny";
     if (condition == "windy") return "Windy";
-    if (condition == "windy-variant") return "Very Windy";
 
     // For unknown conditions, capitalize first letter
     std::string result = condition;
