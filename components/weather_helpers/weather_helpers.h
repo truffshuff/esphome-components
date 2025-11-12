@@ -213,7 +213,7 @@ inline uint32_t get_weather_icon_color(const std::string& condition) {
         condition.find("lightning") != std::string::npos) return 0xFF1493;  // Deep Pink
     if (condition.find("partlycloudy") != std::string::npos) return 0x87CEFA;  // Light Sky Blue
     if (condition.find("cloudy") != std::string::npos) return 0xA9A9A9;  // Dark Gray
-    if (condition.find("rainy") != std::string::npos return 0x4169E1;  // Royal Blue
+    if (condition.find("rainy") != std::string::npos) return 0x4169E1;  // Royal Blue
     if (condition.find("snowy") != std::string::npos) return 0xDCDCDC;  // Gainsboro
     if (condition.find("fog") != std::string::npos) return 0xB0C4DE;  // Light Steel Blue
     if (condition.find("windy") != std::string::npos) return 0x90EE90;  // Light Green
