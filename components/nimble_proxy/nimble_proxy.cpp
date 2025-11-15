@@ -138,8 +138,10 @@ void NimBLEProxy::start_scan_() {
   memset(&scan_params, 0, sizeof(scan_params));
 
   // Configure scan parameters
-  scan_params.itvl = 512;  // 320ms (N * 0.625ms)
-  scan_params.window = 48;  // 30ms
+  // Reduced from 512/48 (320ms/30ms) to 2048/512 (1280ms/320ms)
+  // This gives BLE a 25% duty cycle instead of 9%, reducing TCP traffic by ~72%
+  scan_params.itvl = 2048;  // 1280ms interval (N * 0.625ms)
+  scan_params.window = 512;  // 320ms window
   scan_params.filter_policy = BLE_HCI_SCAN_FILT_NO_WL;
   scan_params.limited = 0;  // General discovery
   scan_params.passive = 0;  // Active scanning
