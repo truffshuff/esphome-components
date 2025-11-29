@@ -215,39 +215,51 @@ void NimBLEProxy::start_advertising_() {
   memset(&fields, 0, sizeof(fields));
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-  // Build device name with MAC address for unique identification
+  // Build device name for BLE advertising
   // IMPORTANT: Use static storage so the pointer remains valid after function returns
+  // IMPORTANT: Do NOT include MAC address suffix in BLE name to avoid HA "metadevice" errors
+  //            Home Assistant extracts MAC from both the advertisement packet (BLE MAC) and
+  //            device name (WiFi MAC suffix), creating a mismatch that triggers metadevice bug
   static char device_name[32];
   std::string name_base = App.get_name();
-
-  // Get last 3 bytes (6 hex chars) of WiFi MAC address (not BT MAC)
-  uint8_t addr[6];
-  int rc_addr = esp_read_mac(addr, ESP_MAC_WIFI_STA);
 
   // If we have service UUIDs (like Improv), we need a shorter name to fit in 31 bytes
   // Calculation: Flags(3) + Name(2+N) + UUID128(18) = 23+N bytes
   // Maximum name length: 31 - 23 = 8 characters
-  // Format: "h-XXYYZZ" (8 chars) where XXYYZZ is last 3 bytes of MAC
   auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
   static ble_uuid128_t uuid_storage[1];
-  if (!advertising_uuids.empty() && rc_addr == 0) {
-    // Use minimal name with MAC: "h-ABC123" (8 chars max)
-    // Extract first char from device name
+  if (!advertising_uuids.empty()) {
+    // Use shortened base name without MAC suffix: "halo" becomes "h" (fits in 8 chars)
     std::string short_name = name_base;
     size_t dash_pos = short_name.find('-');
     if (dash_pos != std::string::npos) {
       short_name = short_name.substr(0, dash_pos);  // Keep only base part (e.g., "halo")
     }
-    // Use first char + hyphen + MAC (1+1+6 = 8 chars)
-    snprintf(device_name, sizeof(device_name), "%c-%02X%02X%02X",
-             short_name[0], addr[3], addr[4], addr[5]);
-  } else if (rc_addr == 0) {
-    // No service UUIDs, use full name with MAC
-    snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
-             name_base.c_str(), addr[3], addr[4], addr[5]);
+    // Use just first character or short form (no MAC needed - BLE MAC is in advertisement)
+    snprintf(device_name, sizeof(device_name), "%c", short_name[0]);
   } else {
-    // Fallback if MAC address not available
-    snprintf(device_name, sizeof(device_name), "%s", name_base.c_str());
+    // No service UUIDs - use full base name without MAC suffix
+    // Extract base name before any MAC suffix (e.g., "halo-v1-79e384" -> "halo-v1")
+    std::string clean_name = name_base;
+    size_t last_dash = clean_name.rfind('-');
+    if (last_dash != std::string::npos) {
+      // Check if the part after last dash looks like a MAC (6 hex chars)
+      std::string potential_mac = clean_name.substr(last_dash + 1);
+      if (potential_mac.length() == 6) {
+        bool is_hex = true;
+        for (char c : potential_mac) {
+          if (!isxdigit(c)) {
+            is_hex = false;
+            break;
+          }
+        }
+        if (is_hex) {
+          // Remove the MAC suffix
+          clean_name = clean_name.substr(0, last_dash);
+        }
+      }
+    }
+    snprintf(device_name, sizeof(device_name), "%s", clean_name.c_str());
   }
 
   // If we have service UUIDs, include them in MAIN advertising packet
@@ -279,7 +291,17 @@ void NimBLEProxy::start_advertising_() {
     return;
   }
 
-  ESP_LOGI(TAG, "Advertising started");
+  // Log MAC addresses for debugging metadevice issues
+  uint8_t bt_addr[6], wifi_addr[6];
+  if (esp_read_mac(bt_addr, ESP_MAC_BT) == 0 && esp_read_mac(wifi_addr, ESP_MAC_WIFI_STA) == 0) {
+    ESP_LOGI(TAG, "Advertising started with device name: '%s'", device_name);
+    ESP_LOGI(TAG, "BT MAC (advertised): %02X:%02X:%02X:%02X:%02X:%02X",
+             bt_addr[0], bt_addr[1], bt_addr[2], bt_addr[3], bt_addr[4], bt_addr[5]);
+    ESP_LOGI(TAG, "WiFi MAC (ESPHome): %02X:%02X:%02X:%02X:%02X:%02X",
+             wifi_addr[0], wifi_addr[1], wifi_addr[2], wifi_addr[3], wifi_addr[4], wifi_addr[5]);
+  } else {
+    ESP_LOGI(TAG, "Advertising started");
+  }
 }
 
 int NimBLEProxy::gap_event_handler_(struct ble_gap_event *event, void *arg) {
