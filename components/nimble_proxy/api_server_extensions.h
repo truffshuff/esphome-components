@@ -149,11 +149,11 @@ inline void send_gatt_error(
 }
 
 // Helper to fill UUID fields in GATT messages
-inline void fill_gatt_uuid(std::array<uint64_t, 2> &uuid_field, uint64_t &short_uuid, const std::array<uint64_t, 2> &uuid) {
+inline void fill_gatt_uuid(std::array<uint64_t, 2> &uuid_field, uint32_t &short_uuid, const std::array<uint64_t, 2> &uuid) {
   // Check if this is a short UUID (16 or 32-bit)
   if (uuid[1] == 0 && uuid[0] <= 0xFFFFFFFF) {
     // Use short UUID for 16 or 32-bit UUIDs
-    short_uuid = uuid[0];
+    short_uuid = static_cast<uint32_t>(uuid[0]);
   } else {
     // Use 128-bit UUID
     uuid_field[0] = uuid[0];
