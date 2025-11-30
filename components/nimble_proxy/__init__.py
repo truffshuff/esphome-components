@@ -77,15 +77,7 @@ async def to_code(config):
     cg.add(var.set_active(config[CONF_ACTIVE]))
     cg.add(var.set_connection_slots(config[CONF_CONNECTION_SLOTS]))
 
-    # Log warning if cache_services is enabled (not yet implemented)
-    if config[CONF_CACHE_SERVICES]:
-        cg.add_library(None, None)  # Dummy to allow logging
-        # Note: We accept the parameter for API compatibility but don't use it yet
-        # Active GATT connections required before service caching can be implemented
-
-    # Log deprecation warning if legacy parameter was used
-    if CORE.data.get("nimble_proxy", {}).get("used_legacy_param", False):
-        cg.add_library(None, None)  # Dummy to allow logging
-        # Warning will be shown during compilation
+    # Note: cache_services parameter is accepted for API compatibility with Bluedroid bluetooth_proxy
+    # but is not yet functional. Active GATT connections required before service caching can be implemented.
 
     # No library dependency needed - using ESP-IDF native NimBLE
