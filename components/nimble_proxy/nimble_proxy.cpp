@@ -1256,59 +1256,90 @@ bool NimBLEProxy::load_service_cache_(NimBLEConnection *conn) {
 
   // Deserialize the cache
   uint8_t *ptr = cache_struct.data;
+  uint8_t *end = cache_struct.data + cache_struct.size;
 
-  try {
-    // Load services
-    uint16_t num_services;
-    memcpy(&num_services, ptr, 2);
-    ptr += 2;
-
-    conn->services.clear();
-    for (uint16_t i = 0; i < num_services; i++) {
-      ble_gatt_svc svc;
-      memcpy(&svc, ptr, sizeof(ble_gatt_svc));
-      ptr += sizeof(ble_gatt_svc);
-      conn->services.push_back(svc);
-    }
-
-    // Load characteristics
-    uint16_t num_chars;
-    memcpy(&num_chars, ptr, 2);
-    ptr += 2;
-
-    conn->characteristics.clear();
-    for (uint16_t i = 0; i < num_chars; i++) {
-      ble_gatt_chr chr;
-      memcpy(&chr, ptr, sizeof(ble_gatt_chr));
-      ptr += sizeof(ble_gatt_chr);
-      conn->characteristics.push_back(chr);
-    }
-
-    // Load descriptors
-    uint16_t num_descs;
-    memcpy(&num_descs, ptr, 2);
-    ptr += 2;
-
-    conn->descriptors.clear();
-    for (uint16_t i = 0; i < num_descs; i++) {
-      ble_gatt_dsc dsc;
-      memcpy(&dsc, ptr, sizeof(ble_gatt_dsc));
-      ptr += sizeof(ble_gatt_dsc);
-      conn->descriptors.push_back(dsc);
-    }
-
-    conn->discovery_complete = true;
-    conn->cache_loaded = true;
-
-    ESP_LOGI(TAG, "Service cache loaded successfully (%d services, %d chars, %d descs)",
-             conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
-
-    return true;
-
-  } catch (...) {
-    ESP_LOGE(TAG, "Failed to deserialize service cache");
+  // Validate we have enough data for service count
+  if (ptr + 2 > end) {
+    ESP_LOGE(TAG, "Cache data truncated (service count)");
     return false;
   }
+
+  // Load services
+  uint16_t num_services;
+  memcpy(&num_services, ptr, 2);
+  ptr += 2;
+
+  // Validate service data size
+  if (ptr + (num_services * sizeof(ble_gatt_svc)) > end) {
+    ESP_LOGE(TAG, "Cache data truncated (services)");
+    return false;
+  }
+
+  conn->services.clear();
+  for (uint16_t i = 0; i < num_services; i++) {
+    ble_gatt_svc svc;
+    memcpy(&svc, ptr, sizeof(ble_gatt_svc));
+    ptr += sizeof(ble_gatt_svc);
+    conn->services.push_back(svc);
+  }
+
+  // Validate we have enough data for characteristic count
+  if (ptr + 2 > end) {
+    ESP_LOGE(TAG, "Cache data truncated (characteristic count)");
+    return false;
+  }
+
+  // Load characteristics
+  uint16_t num_chars;
+  memcpy(&num_chars, ptr, 2);
+  ptr += 2;
+
+  // Validate characteristic data size
+  if (ptr + (num_chars * sizeof(ble_gatt_chr)) > end) {
+    ESP_LOGE(TAG, "Cache data truncated (characteristics)");
+    return false;
+  }
+
+  conn->characteristics.clear();
+  for (uint16_t i = 0; i < num_chars; i++) {
+    ble_gatt_chr chr;
+    memcpy(&chr, ptr, sizeof(ble_gatt_chr));
+    ptr += sizeof(ble_gatt_chr);
+    conn->characteristics.push_back(chr);
+  }
+
+  // Validate we have enough data for descriptor count
+  if (ptr + 2 > end) {
+    ESP_LOGE(TAG, "Cache data truncated (descriptor count)");
+    return false;
+  }
+
+  // Load descriptors
+  uint16_t num_descs;
+  memcpy(&num_descs, ptr, 2);
+  ptr += 2;
+
+  // Validate descriptor data size
+  if (ptr + (num_descs * sizeof(ble_gatt_dsc)) > end) {
+    ESP_LOGE(TAG, "Cache data truncated (descriptors)");
+    return false;
+  }
+
+  conn->descriptors.clear();
+  for (uint16_t i = 0; i < num_descs; i++) {
+    ble_gatt_dsc dsc;
+    memcpy(&dsc, ptr, sizeof(ble_gatt_dsc));
+    ptr += sizeof(ble_gatt_dsc);
+    conn->descriptors.push_back(dsc);
+  }
+
+  conn->discovery_complete = true;
+  conn->cache_loaded = true;
+
+  ESP_LOGI(TAG, "Service cache loaded successfully (%d services, %d chars, %d descs)",
+           conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
+
+  return true;
 }
 
 bool NimBLEProxy::clear_service_cache_(uint64_t address) {
