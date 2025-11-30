@@ -28,6 +28,7 @@
 #include "esp_mac.h"
 #include "nvs_flash.h"
 #include <cstring>
+#include <algorithm>
 
 #ifdef USE_API
 #include "esphome/components/api/api_server.h"
@@ -305,41 +306,60 @@ void NimBLEProxy::start_advertising_() {
 }
 
 int NimBLEProxy::gap_event_handler_(struct ble_gap_event *event, void *arg) {
+  // arg is the NimBLEConnection* pointer passed to ble_gap_connect()
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+
+  if (global_nimble_proxy == nullptr) {
+    ESP_LOGW(TAG, "global_nimble_proxy is null in gap_event_handler_");
+    return 0;
+  }
+
   switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-      ESP_LOGI(TAG, "Connection %s; status=%d",
-               event->connect.status == 0 ? "established" : "failed",
-               event->connect.status);
-      
-      if (event->connect.status != 0) {
-        // Connection failed, resume advertising
-        if (global_nimble_proxy != nullptr) {
-          global_nimble_proxy->start_advertising_();
-        }
-      }
+      global_nimble_proxy->handle_gap_connect_(event, conn);
       break;
-      
+
     case BLE_GAP_EVENT_DISCONNECT:
-      ESP_LOGI(TAG, "Disconnect; reason=%d", event->disconnect.reason);
-      
-      // Resume advertising
-      if (global_nimble_proxy != nullptr) {
-        global_nimble_proxy->start_advertising_();
+      global_nimble_proxy->handle_gap_disconnect_(event, conn);
+      break;
+
+    case BLE_GAP_EVENT_NOTIFY_RX:
+      global_nimble_proxy->handle_gap_notify_(event, conn);
+      break;
+
+    case BLE_GAP_EVENT_MTU:
+      if (conn != nullptr) {
+        conn->mtu = event->mtu.value;
+        ESP_LOGI(TAG, "MTU updated; conn_handle=%d mtu=%d",
+                 event->mtu.conn_handle, event->mtu.value);
       }
       break;
-      
+
+    case BLE_GAP_EVENT_ENC_CHANGE:
+      if (conn != nullptr) {
+        conn->encrypted = (event->enc_change.status == 0);
+        ESP_LOGI(TAG, "Encryption changed; conn_handle=%d status=%d",
+                 conn->conn_handle, event->enc_change.status);
+      }
+      break;
+
     case BLE_GAP_EVENT_ADV_COMPLETE:
       ESP_LOGV(TAG, "Advertising complete");
       break;
 
     case BLE_GAP_EVENT_CONN_UPDATE:
       ESP_LOGV(TAG, "Connection updated; status=%d", event->conn_update.status);
+      if (conn != nullptr && event->conn_update.status == 0) {
+        conn->conn_interval = event->conn_update.conn_itvl;
+        conn->conn_latency = event->conn_update.conn_latency;
+        conn->supervision_timeout = event->conn_update.supervision_timeout;
+      }
       break;
-      
+
     default:
       break;
   }
-  
+
   return 0;
 }
 
@@ -490,9 +510,8 @@ uint32_t NimBLEProxy::get_feature_flags() {
   const uint32_t FEATURE_RAW_ADVERTISEMENTS = 1 << 5;
   const uint32_t FEATURE_STATE_AND_MODE = 1 << 6;
 
-  // We support passive scanning, raw advertisements, and mode reporting
-  // Active connections not yet implemented
-  return FEATURE_PASSIVE_SCAN | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
+  // We support passive scanning, active connections, raw advertisements, and mode reporting
+  return FEATURE_PASSIVE_SCAN | FEATURE_ACTIVE_CONNECTIONS | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
 }
 
 std::string NimBLEProxy::get_bluetooth_mac_address_pretty() {
@@ -591,6 +610,243 @@ void NimBLEProxy::unsubscribe_api_connection(void *conn) {
   }
 }
 
+//=============================================================================
+// GAP Event Handlers for Connections
+//=============================================================================
+
+void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnection *conn) {
+  if (event->connect.status == 0) {
+    // Connection established successfully
+    if (conn != nullptr) {
+      conn->conn_handle = event->connect.conn_handle;
+      conn->state = NimBLEConnectionState::CONNECTED;
+      conn->state_timestamp = millis();
+
+      ESP_LOGI(TAG, "Connection established; conn_handle=%d address=%012llX",
+               conn->conn_handle, conn->address);
+
+      // Send success response to Home Assistant
+      this->send_connection_response_(conn, true, 0);
+
+      // TODO Phase 2.2: Start service discovery
+      // this->start_service_discovery_(conn);
+    } else {
+      ESP_LOGW(TAG, "Connection established but conn pointer is null");
+    }
+  } else {
+    // Connection failed
+    ESP_LOGE(TAG, "Connection failed; status=%d", event->connect.status);
+
+    if (conn != nullptr) {
+      this->send_connection_response_(conn, false, event->connect.status);
+      this->reset_connection_(conn);
+    }
+
+    // Resume advertising if we were advertising
+    auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
+    if (!advertising_uuids.empty()) {
+      this->start_advertising_();
+    }
+  }
+}
+
+void NimBLEProxy::handle_gap_disconnect_(struct ble_gap_event *event, NimBLEConnection *conn) {
+  ESP_LOGI(TAG, "Disconnect; conn_handle=%d reason=%d",
+           event->disconnect.conn.conn_handle, event->disconnect.reason);
+
+  // If conn is null, try to find it by handle
+  if (conn == nullptr) {
+    conn = this->get_connection_by_handle_(event->disconnect.conn.conn_handle);
+  }
+
+  if (conn != nullptr) {
+    // Send disconnection response to Home Assistant
+    this->send_connection_response_(conn, false, 0);
+
+    // Reset the connection slot
+    this->reset_connection_(conn);
+  } else {
+    ESP_LOGW(TAG, "Disconnect event for unknown connection handle %d",
+             event->disconnect.conn.conn_handle);
+  }
+
+  // Resume advertising if we were advertising
+  auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
+  if (!advertising_uuids.empty()) {
+    this->start_advertising_();
+  }
+}
+
+void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnection *conn) {
+  // TODO: Implement in Phase 2.4
+  ESP_LOGV(TAG, "Notification received; conn_handle=%d attr_handle=%d",
+           event->notify_rx.conn_handle, event->notify_rx.attr_handle);
+}
+
+//=============================================================================
+// Connection Management Helper Functions
+//=============================================================================
+
+// Helper: Get or reserve connection slot
+NimBLEConnection* NimBLEProxy::get_connection_(uint64_t address, bool reserve) {
+  std::lock_guard<std::mutex> lock(this->connections_mutex_);
+
+  // Find existing connection by address
+  for (auto &conn : this->connections_) {
+    if (conn.address == address && conn.state != NimBLEConnectionState::IDLE) {
+      return &conn;
+    }
+  }
+
+  // Reserve new slot if requested
+  if (reserve) {
+    for (auto &conn : this->connections_) {
+      if (conn.state == NimBLEConnectionState::IDLE) {
+        conn.address = address;
+        conn.state = NimBLEConnectionState::CONNECTING;
+        conn.state_timestamp = millis();
+        return &conn;
+      }
+    }
+    ESP_LOGW(TAG, "No available connection slots");
+  }
+
+  return nullptr;
+}
+
+// Helper: Get connection by handle
+NimBLEConnection* NimBLEProxy::get_connection_by_handle_(uint16_t conn_handle) {
+  std::lock_guard<std::mutex> lock(this->connections_mutex_);
+
+  for (auto &conn : this->connections_) {
+    if (conn.conn_handle == conn_handle && conn.state != NimBLEConnectionState::IDLE) {
+      return &conn;
+    }
+  }
+
+  return nullptr;
+}
+
+// Helper: Reset connection to IDLE state
+void NimBLEProxy::reset_connection_(NimBLEConnection *conn) {
+  if (conn == nullptr) return;
+
+  std::lock_guard<std::mutex> lock(this->connections_mutex_);
+
+  ESP_LOGI(TAG, "Resetting connection slot (address=%012llX)", conn->address);
+  conn->reset();
+}
+
+// Helper: Send connection response to Home Assistant
+void NimBLEProxy::send_connection_response_(NimBLEConnection *conn, bool connected, int error) {
+#ifdef USE_API
+  if (conn == nullptr) return;
+
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    api_conn = this->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send connection response");
+    return;
+  }
+
+  send_connection_response(api_conn, conn->address, connected, conn->mtu, error);
+  ESP_LOGI(TAG, "Sent connection response: address=%012llX connected=%d mtu=%d error=%d",
+           conn->address, connected, conn->mtu, error);
+#endif
+}
+
+// UUID conversion helper
+std::array<uint64_t, 2> NimBLEProxy::nimble_uuid_to_api_(const ble_uuid_any_t *uuid) {
+  std::array<uint64_t, 2> result{0, 0};
+
+  if (uuid->u.type == BLE_UUID_TYPE_16) {
+    result[0] = uuid->u16.value;
+  } else if (uuid->u.type == BLE_UUID_TYPE_32) {
+    result[0] = uuid->u32.value;
+  } else if (uuid->u.type == BLE_UUID_TYPE_128) {
+    memcpy(&result[0], &uuid->u128.value[0], 8);
+    memcpy(&result[1], &uuid->u128.value[8], 8);
+  }
+
+  return result;
+}
+
+ble_uuid_any_t NimBLEProxy::api_uuid_to_nimble_(const std::array<uint64_t, 2> &uuid) {
+  ble_uuid_any_t result;
+  memset(&result, 0, sizeof(result));
+
+  if (uuid[1] == 0 && uuid[0] <= 0xFFFF) {
+    result.u.type = BLE_UUID_TYPE_16;
+    result.u16.value = uuid[0];
+  } else if (uuid[1] == 0 && uuid[0] <= 0xFFFFFFFF) {
+    result.u.type = BLE_UUID_TYPE_32;
+    result.u32.value = uuid[0];
+  } else {
+    result.u.type = BLE_UUID_TYPE_128;
+    memcpy(&result.u128.value[0], &uuid[0], 8);
+    memcpy(&result.u128.value[8], &uuid[1], 8);
+  }
+
+  return result;
+}
+
+// Stub implementations for Phase 2.2+ functions (will be implemented later)
+void NimBLEProxy::start_service_discovery_(NimBLEConnection *conn) {
+  // TODO: Implement in Phase 2.2
+  ESP_LOGW(TAG, "Service discovery not yet implemented");
+}
+
+void NimBLEProxy::start_char_discovery_(NimBLEConnection *conn) {
+  // TODO: Implement in Phase 2.2
+}
+
+void NimBLEProxy::start_dsc_discovery_(NimBLEConnection *conn) {
+  // TODO: Implement in Phase 2.2
+}
+
+void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
+  // TODO: Implement in Phase 2.2
+}
+
+uint16_t NimBLEProxy::find_cccd_handle_(NimBLEConnection *conn, uint16_t char_handle) {
+  // TODO: Implement in Phase 2.4
+  return 0;
+}
+
+int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                             struct ble_gatt_attr *attr, void *arg) {
+  // TODO: Implement in Phase 2.3
+  return 0;
+}
+
+int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                              struct ble_gatt_attr *attr, void *arg) {
+  // TODO: Implement in Phase 2.3
+  return 0;
+}
+
+int NimBLEProxy::on_disc_svc_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                                 const struct ble_gatt_svc *service, void *arg) {
+  // TODO: Implement in Phase 2.2
+  return 0;
+}
+
+int NimBLEProxy::on_disc_chr_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                                 const struct ble_gatt_chr *chr, void *arg) {
+  // TODO: Implement in Phase 2.2
+  return 0;
+}
+
+int NimBLEProxy::on_disc_dsc_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                                 uint16_t chr_val_handle, const struct ble_gatt_dsc *dsc, void *arg) {
+  // TODO: Implement in Phase 2.2
+  return 0;
+}
+
 void NimBLEProxy::dump_config() {
   bool has_connection = false;
   {
@@ -606,6 +862,113 @@ void NimBLEProxy::dump_config() {
   ESP_LOGCONFIG(TAG, "  API Connection: %s", has_connection ? "connected" : "none");
   ESP_LOGCONFIG(TAG, "  BT controller status: %d", (int) esp_bt_controller_get_status());
 }
+
+//=============================================================================
+// Bluetooth Proxy API Template Implementations
+//=============================================================================
+
+#ifdef USE_API
+template<typename T>
+void NimBLEProxy::bluetooth_device_request(const T &msg) {
+  ESP_LOGI(TAG, "bluetooth_device_request: address=%012llX type=%d",
+           msg.address, msg.request_type);
+
+  switch (msg.request_type) {
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT:
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT_V3_WITH_CACHE:
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT_V3_WITHOUT_CACHE: {
+      // Get or reserve connection slot
+      NimBLEConnection *conn = this->get_connection_(msg.address, true);
+      if (conn == nullptr) {
+        ESP_LOGE(TAG, "No available connection slots");
+        return;
+      }
+
+      // Already connected?
+      if (conn->state == NimBLEConnectionState::CONNECTED ||
+          conn->state == NimBLEConnectionState::READY) {
+        ESP_LOGI(TAG, "Already connected");
+        this->send_connection_response_(conn, true, 0);
+        return;
+      }
+
+      // Already connecting?
+      if (conn->state == NimBLEConnectionState::CONNECTING) {
+        ESP_LOGW(TAG, "Connection already in progress");
+        return;
+      }
+
+      // Build BLE address from uint64_t
+      ble_addr_t addr;
+      addr.type = msg.has_address_type ? msg.address_type : BLE_ADDR_PUBLIC;
+      for (int i = 0; i < 6; i++) {
+        addr.val[i] = (msg.address >> (i * 8)) & 0xFF;
+      }
+
+      conn->address_type = addr.type;
+      conn->state = NimBLEConnectionState::CONNECTING;
+      conn->state_timestamp = millis();
+
+      ESP_LOGI(TAG, "Initiating connection to %02X:%02X:%02X:%02X:%02X:%02X (type=%d)",
+               addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0],
+               addr.type);
+
+      // Initiate connection (30 second timeout)
+      int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &addr, 30000, NULL,
+                              NimBLEProxy::gap_event_handler_, conn);
+      if (rc != 0) {
+        ESP_LOGE(TAG, "ble_gap_connect failed; rc=%d", rc);
+        this->send_connection_response_(conn, false, rc);
+        this->reset_connection_(conn);
+      }
+      break;
+    }
+
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_DISCONNECT: {
+      NimBLEConnection *conn = this->get_connection_(msg.address, false);
+      if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+        ESP_LOGW(TAG, "Connection not found for disconnect");
+        return;
+      }
+
+      ESP_LOGI(TAG, "Disconnecting from address=%012llX conn_handle=%d",
+               conn->address, conn->conn_handle);
+
+      conn->state = NimBLEConnectionState::DISCONNECTING;
+
+      int rc = ble_gap_terminate(conn->conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+      if (rc != 0) {
+        ESP_LOGE(TAG, "ble_gap_terminate failed; rc=%d", rc);
+        // Reset anyway on error
+        this->reset_connection_(conn);
+      }
+      break;
+    }
+
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_PAIR:
+      // TODO: Implement pairing in Phase 2.6
+      ESP_LOGW(TAG, "Pairing not yet implemented");
+      break;
+
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_UNPAIR:
+      // TODO: Implement unpairing in Phase 2.6
+      ESP_LOGW(TAG, "Unpairing not yet implemented");
+      break;
+
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CLEAR_CACHE:
+      // TODO: Implement cache clearing in Phase 2.5
+      ESP_LOGW(TAG, "Cache clearing not yet implemented");
+      break;
+
+    default:
+      ESP_LOGW(TAG, "Unknown device request type: %d", msg.request_type);
+      break;
+  }
+}
+
+// Explicit template instantiation for API message types
+template void NimBLEProxy::bluetooth_device_request(const api::BluetoothDeviceRequest &msg);
+#endif
 
 }  // namespace nimble_proxy
 }  // namespace esphome
