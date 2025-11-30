@@ -795,9 +795,9 @@ void NimBLEProxy::handle_gap_passkey_action_(struct ble_gap_event *event, NimBLE
       break;
 
     case BLE_SM_IOACT_OOB:
-      ESP_LOGI(TAG, "Out-of-band pairing not supported");
-      // For now, reject OOB pairing
-      ble_sm_inject_io(event->passkey.conn_handle, BLE_SM_ERR_OOB);
+      ESP_LOGI(TAG, "Out-of-band pairing not supported - rejecting");
+      // OOB pairing is not supported, so we don't inject any IO
+      // The pairing will fail without our response
       break;
 
     case BLE_SM_IOACT_INPUT:
