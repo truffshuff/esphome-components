@@ -1423,7 +1423,7 @@ void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
   ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%d len=%d response=%d",
-           msg.address, msg.handle, msg.data.size(), msg.response);
+           msg.address, msg.handle, msg.data_len, msg.response);
 
   // Find the connection
   NimBLEConnection *conn = this->get_connection_(msg.address, false);
@@ -1465,12 +1465,12 @@ void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
   if (msg.response) {
     // Write with response (ble_gattc_write_flat)
     rc = ble_gattc_write_flat(conn->conn_handle, msg.handle,
-                              msg.data.data(), msg.data.size(),
+                              msg.data, msg.data_len,
                               NimBLEProxy::on_write_cb_, conn);
   } else {
     // Write without response (ble_gattc_write_no_rsp_flat)
     rc = ble_gattc_write_no_rsp_flat(conn->conn_handle, msg.handle,
-                                     msg.data.data(), msg.data.size());
+                                     msg.data, msg.data_len);
 
     // For write without response, send immediate success
     if (rc == 0) {
@@ -1562,7 +1562,7 @@ void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
   ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%d len=%d",
-           msg.address, msg.handle, msg.data.size());
+           msg.address, msg.handle, msg.data_len);
 
   // Find the connection
   NimBLEConnection *conn = this->get_connection_(msg.address, false);
@@ -1601,7 +1601,7 @@ void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
   // Perform the GATT descriptor write (uses same function as characteristic write)
   // Descriptors always use write with response
   int rc = ble_gattc_write_flat(conn->conn_handle, msg.handle,
-                                msg.data.data(), msg.data.size(),
+                                msg.data, msg.data_len,
                                 NimBLEProxy::on_write_cb_, conn);
   if (rc != 0) {
     ESP_LOGE(TAG, "ble_gattc_write_flat (descriptor) failed; rc=%d", rc);
