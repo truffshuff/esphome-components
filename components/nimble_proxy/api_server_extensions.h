@@ -105,9 +105,13 @@ inline void send_gatt_read_response(
   resp.address = address;
   resp.handle = handle;
 
-  // Copy data to the response
+  // Copy data to the response using the pointer and length fields
   if (data != nullptr && len > 0) {
-    resp.data.assign(data, data + len);
+    resp.data_ptr_ = data;
+    resp.data_len_ = len;
+  } else {
+    resp.data_ptr_ = nullptr;
+    resp.data_len_ = 0;
   }
 
   if (!conn->send_message(resp, api::BluetoothGATTReadResponse::MESSAGE_TYPE)) {

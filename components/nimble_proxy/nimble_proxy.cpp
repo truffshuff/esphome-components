@@ -349,11 +349,8 @@ int NimBLEProxy::gap_event_handler_(struct ble_gap_event *event, void *arg) {
 
     case BLE_GAP_EVENT_CONN_UPDATE:
       ESP_LOGV(TAG, "Connection updated; status=%d", event->conn_update.status);
-      if (conn != nullptr && event->conn_update.status == 0) {
-        conn->conn_interval = event->conn_update.conn_itvl;
-        conn->conn_latency = event->conn_update.conn_latency;
-        conn->supervision_timeout = event->conn_update.supervision_timeout;
-      }
+      // Connection parameters are available in the conn_desc structure
+      // We can query them if needed, but for now just log the update
       break;
 
     default:
