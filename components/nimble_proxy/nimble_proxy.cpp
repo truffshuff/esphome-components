@@ -600,7 +600,7 @@ void NimBLEProxy::dump_config() {
 
   ESP_LOGCONFIG(TAG, "NimBLE Proxy:");
   ESP_LOGCONFIG(TAG, "  Active: %s", YESNO(this->active_));
-  ESP_LOGCONFIG(TAG, "  Max Connections: %d", this->max_connections_);
+  ESP_LOGCONFIG(TAG, "  Connection Slots: %d", this->connection_slots_);
   ESP_LOGCONFIG(TAG, "  Initialized: %s", YESNO(this->initialized_));
   ESP_LOGCONFIG(TAG, "  Host task started: %s", YESNO(this->host_task_started_));
   ESP_LOGCONFIG(TAG, "  API Connection: %s", has_connection ? "connected" : "none");

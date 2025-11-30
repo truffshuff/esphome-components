@@ -45,7 +45,10 @@ class NimBLEProxy : public Component {
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH + 1.0f; }
 
   void set_active(bool active) { this->active_ = active; }
-  void set_max_connections(uint8_t max_connections) { this->max_connections_ = max_connections; }
+  void set_connection_slots(uint8_t connection_slots) { this->connection_slots_ = connection_slots; }
+
+  // Legacy method for backward compatibility
+  void set_max_connections(uint8_t max_connections) { this->connection_slots_ = max_connections; }
 
   // Allow external components (like nimble_improv) to register GATT services
   // Must be called BEFORE setup() runs (use static registration)
@@ -77,7 +80,7 @@ class NimBLEProxy : public Component {
 
  protected:
   bool active_{true};
-  uint8_t max_connections_{3};
+  uint8_t connection_slots_{3};  // Renamed from max_connections_ to match Bluedroid API
   bool initialized_{false};
   bool host_task_started_{false};
   bool scanning_{false};
