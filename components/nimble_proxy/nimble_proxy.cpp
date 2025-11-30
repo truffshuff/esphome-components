@@ -974,15 +974,15 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
             fill_gatt_uuid(desc_resp.uuid, desc_resp.short_uuid, desc_uuid);
             desc_resp.handle = descriptor.handle;
 
-            char_resp.descriptors.push_back(desc_resp);
+            char_resp.descriptors.push_back(std::move(desc_resp));
           }
         }
 
-        service_resp.characteristics.push_back(char_resp);
+        service_resp.characteristics.push_back(std::move(char_resp));
       }
     }
 
-    resp.services.push_back(service_resp);
+    resp.services.push_back(std::move(service_resp));
   }
 
   // Send the complete response
