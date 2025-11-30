@@ -1188,11 +1188,27 @@ bool NimBLEProxy::save_service_cache_(NimBLEConnection *conn) {
   }
 
   // Save to NVS using ESPHome preferences
-  std::string cache_key = this->get_cache_key_(conn->address);
-  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
-  bool success = pref.save(cache_buffer, cache_size);
+  // Use a struct wrapper to store the cache data
+  struct CacheData {
+    size_t size;
+    uint8_t data[8192];  // Max 8KB cache
+  };
+
+  if (cache_size > sizeof(CacheData::data)) {
+    ESP_LOGE(TAG, "Cache size (%d bytes) exceeds maximum (%d bytes)", cache_size, sizeof(CacheData::data));
+    delete[] cache_buffer;
+    return false;
+  }
+
+  CacheData cache_struct;
+  cache_struct.size = cache_size;
+  memcpy(cache_struct.data, cache_buffer, cache_size);
 
   delete[] cache_buffer;
+
+  std::string cache_key = this->get_cache_key_(conn->address);
+  auto pref = global_preferences->make_preference<CacheData>(fnv1_hash(cache_key));
+  bool success = pref.save(&cache_struct);
 
   if (success) {
     ESP_LOGI(TAG, "Service cache saved successfully (%d bytes)", cache_size);
@@ -1218,21 +1234,28 @@ bool NimBLEProxy::load_service_cache_(NimBLEConnection *conn) {
 
   // Try to load from NVS
   std::string cache_key = this->get_cache_key_(conn->address);
-  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
 
-  // Determine cache size by attempting to load
-  // ESPHome preferences don't have a size query, so we allocate a max buffer
-  const size_t max_cache_size = 8192;  // 8KB should be enough for most devices
-  uint8_t *cache_buffer = new uint8_t[max_cache_size];
+  struct CacheData {
+    size_t size;
+    uint8_t data[8192];  // Max 8KB cache
+  };
 
-  if (!pref.load(cache_buffer, max_cache_size)) {
+  CacheData cache_struct;
+  auto pref = global_preferences->make_preference<CacheData>(fnv1_hash(cache_key));
+
+  if (!pref.load(&cache_struct)) {
     ESP_LOGI(TAG, "No cached service data found for address=%012llX", conn->address);
-    delete[] cache_buffer;
+    return false;
+  }
+
+  // Validate cache size
+  if (cache_struct.size == 0 || cache_struct.size > sizeof(cache_struct.data)) {
+    ESP_LOGW(TAG, "Invalid cache size: %d bytes", cache_struct.size);
     return false;
   }
 
   // Deserialize the cache
-  uint8_t *ptr = cache_buffer;
+  uint8_t *ptr = cache_struct.data;
 
   try {
     // Load services
@@ -1280,12 +1303,10 @@ bool NimBLEProxy::load_service_cache_(NimBLEConnection *conn) {
     ESP_LOGI(TAG, "Service cache loaded successfully (%d services, %d chars, %d descs)",
              conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
 
-    delete[] cache_buffer;
     return true;
 
   } catch (...) {
     ESP_LOGE(TAG, "Failed to deserialize service cache");
-    delete[] cache_buffer;
     return false;
   }
 }
@@ -1294,11 +1315,18 @@ bool NimBLEProxy::clear_service_cache_(uint64_t address) {
   ESP_LOGI(TAG, "Clearing service cache for address=%012llX", address);
 
   std::string cache_key = this->get_cache_key_(address);
-  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
+
+  struct CacheData {
+    size_t size;
+    uint8_t data[8192];  // Max 8KB cache
+  };
+
+  auto pref = global_preferences->make_preference<CacheData>(fnv1_hash(cache_key));
 
   // ESPHome doesn't have a direct delete, but we can save empty data
-  uint8_t empty = 0;
-  bool success = pref.save(&empty, 0);
+  CacheData empty_cache;
+  empty_cache.size = 0;
+  bool success = pref.save(&empty_cache);
 
   if (success) {
     ESP_LOGI(TAG, "Service cache cleared successfully");
