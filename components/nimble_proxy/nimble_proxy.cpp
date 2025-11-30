@@ -23,6 +23,7 @@
 
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include "esphome/core/preferences.h"
 #include "esp_err.h"
 #include "esp_system.h"
 #include "esp_mac.h"
@@ -507,8 +508,9 @@ uint32_t NimBLEProxy::get_feature_flags() {
   const uint32_t FEATURE_RAW_ADVERTISEMENTS = 1 << 5;
   const uint32_t FEATURE_STATE_AND_MODE = 1 << 6;
 
-  // We support passive scanning, active connections, raw advertisements, and mode reporting
-  return FEATURE_PASSIVE_SCAN | FEATURE_ACTIVE_CONNECTIONS | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
+  // We support passive scanning, active connections, remote caching, cache clearing, raw advertisements, and mode reporting
+  return FEATURE_PASSIVE_SCAN | FEATURE_ACTIVE_CONNECTIONS | FEATURE_REMOTE_CACHING |
+         FEATURE_CACHE_CLEARING | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
 }
 
 std::string NimBLEProxy::get_bluetooth_mac_address_pretty() {
@@ -861,6 +863,15 @@ void NimBLEProxy::start_service_discovery_(NimBLEConnection *conn) {
     return;
   }
 
+  // Try to load from cache first if caching is enabled
+  if (conn->use_cache && this->load_service_cache_(conn)) {
+    ESP_LOGI(TAG, "Loaded services from cache, skipping discovery");
+    conn->state = NimBLEConnectionState::READY;
+    // Send cached service data to Home Assistant
+    this->send_service_response_(conn);
+    return;
+  }
+
   // Clear any previous discovery data
   conn->services.clear();
   conn->characteristics.clear();
@@ -1107,6 +1118,195 @@ uint16_t NimBLEProxy::find_cccd_handle_(NimBLEConnection *conn, uint16_t char_ha
 
   ESP_LOGW(TAG, "CCCD not found for characteristic handle %d", char_handle);
   return 0;
+}
+
+//=============================================================================
+// Service Cache Helper Functions (Phase 2.5)
+//=============================================================================
+
+std::string NimBLEProxy::get_cache_key_(uint64_t address) {
+  char key[32];
+  snprintf(key, sizeof(key), "ble_cache_%012llX", address);
+  return std::string(key);
+}
+
+bool NimBLEProxy::save_service_cache_(NimBLEConnection *conn) {
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot save cache with null connection");
+    return false;
+  }
+
+  if (!conn->discovery_complete) {
+    ESP_LOGW(TAG, "Cannot save incomplete service discovery to cache");
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Saving service cache for address=%012llX (%d services, %d chars, %d descs)",
+           conn->address, conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
+
+  // Build a serialized cache structure
+  // Format: [num_services][service_data...][num_chars][char_data...][num_descs][desc_data...]
+
+  // Calculate required size
+  size_t cache_size = 0;
+  cache_size += 2;  // num_services (uint16_t)
+  cache_size += conn->services.size() * sizeof(ble_gatt_svc);
+  cache_size += 2;  // num_characteristics (uint16_t)
+  cache_size += conn->characteristics.size() * sizeof(ble_gatt_chr);
+  cache_size += 2;  // num_descriptors (uint16_t)
+  cache_size += conn->descriptors.size() * sizeof(ble_gatt_dsc);
+
+  // Allocate buffer
+  uint8_t *cache_buffer = new uint8_t[cache_size];
+  uint8_t *ptr = cache_buffer;
+
+  // Serialize services
+  uint16_t num_services = conn->services.size();
+  memcpy(ptr, &num_services, 2);
+  ptr += 2;
+  for (const auto &svc : conn->services) {
+    memcpy(ptr, &svc, sizeof(ble_gatt_svc));
+    ptr += sizeof(ble_gatt_svc);
+  }
+
+  // Serialize characteristics
+  uint16_t num_chars = conn->characteristics.size();
+  memcpy(ptr, &num_chars, 2);
+  ptr += 2;
+  for (const auto &chr : conn->characteristics) {
+    memcpy(ptr, &chr, sizeof(ble_gatt_chr));
+    ptr += sizeof(ble_gatt_chr);
+  }
+
+  // Serialize descriptors
+  uint16_t num_descs = conn->descriptors.size();
+  memcpy(ptr, &num_descs, 2);
+  ptr += 2;
+  for (const auto &dsc : conn->descriptors) {
+    memcpy(ptr, &dsc, sizeof(ble_gatt_dsc));
+    ptr += sizeof(ble_gatt_dsc);
+  }
+
+  // Save to NVS using ESPHome preferences
+  std::string cache_key = this->get_cache_key_(conn->address);
+  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
+  bool success = pref.save(cache_buffer, cache_size);
+
+  delete[] cache_buffer;
+
+  if (success) {
+    ESP_LOGI(TAG, "Service cache saved successfully (%d bytes)", cache_size);
+  } else {
+    ESP_LOGE(TAG, "Failed to save service cache");
+  }
+
+  return success;
+}
+
+bool NimBLEProxy::load_service_cache_(NimBLEConnection *conn) {
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot load cache with null connection");
+    return false;
+  }
+
+  if (!conn->use_cache) {
+    ESP_LOGI(TAG, "Cache disabled for this connection");
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Loading service cache for address=%012llX", conn->address);
+
+  // Try to load from NVS
+  std::string cache_key = this->get_cache_key_(conn->address);
+  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
+
+  // Determine cache size by attempting to load
+  // ESPHome preferences don't have a size query, so we allocate a max buffer
+  const size_t max_cache_size = 8192;  // 8KB should be enough for most devices
+  uint8_t *cache_buffer = new uint8_t[max_cache_size];
+
+  if (!pref.load(cache_buffer, max_cache_size)) {
+    ESP_LOGI(TAG, "No cached service data found for address=%012llX", conn->address);
+    delete[] cache_buffer;
+    return false;
+  }
+
+  // Deserialize the cache
+  uint8_t *ptr = cache_buffer;
+
+  try {
+    // Load services
+    uint16_t num_services;
+    memcpy(&num_services, ptr, 2);
+    ptr += 2;
+
+    conn->services.clear();
+    for (uint16_t i = 0; i < num_services; i++) {
+      ble_gatt_svc svc;
+      memcpy(&svc, ptr, sizeof(ble_gatt_svc));
+      ptr += sizeof(ble_gatt_svc);
+      conn->services.push_back(svc);
+    }
+
+    // Load characteristics
+    uint16_t num_chars;
+    memcpy(&num_chars, ptr, 2);
+    ptr += 2;
+
+    conn->characteristics.clear();
+    for (uint16_t i = 0; i < num_chars; i++) {
+      ble_gatt_chr chr;
+      memcpy(&chr, ptr, sizeof(ble_gatt_chr));
+      ptr += sizeof(ble_gatt_chr);
+      conn->characteristics.push_back(chr);
+    }
+
+    // Load descriptors
+    uint16_t num_descs;
+    memcpy(&num_descs, ptr, 2);
+    ptr += 2;
+
+    conn->descriptors.clear();
+    for (uint16_t i = 0; i < num_descs; i++) {
+      ble_gatt_dsc dsc;
+      memcpy(&dsc, ptr, sizeof(ble_gatt_dsc));
+      ptr += sizeof(ble_gatt_dsc);
+      conn->descriptors.push_back(dsc);
+    }
+
+    conn->discovery_complete = true;
+    conn->cache_loaded = true;
+
+    ESP_LOGI(TAG, "Service cache loaded successfully (%d services, %d chars, %d descs)",
+             conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
+
+    delete[] cache_buffer;
+    return true;
+
+  } catch (...) {
+    ESP_LOGE(TAG, "Failed to deserialize service cache");
+    delete[] cache_buffer;
+    return false;
+  }
+}
+
+bool NimBLEProxy::clear_service_cache_(uint64_t address) {
+  ESP_LOGI(TAG, "Clearing service cache for address=%012llX", address);
+
+  std::string cache_key = this->get_cache_key_(address);
+  auto pref = global_preferences->make_preference<uint8_t>(fnv1_hash(cache_key), true);
+
+  // ESPHome doesn't have a direct delete, but we can save empty data
+  uint8_t empty = 0;
+  bool success = pref.save(&empty, 0);
+
+  if (success) {
+    ESP_LOGI(TAG, "Service cache cleared successfully");
+  } else {
+    ESP_LOGE(TAG, "Failed to clear service cache");
+  }
+
+  return success;
 }
 
 int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
@@ -1376,6 +1576,11 @@ int NimBLEProxy::on_disc_dsc_cb_(uint16_t conn_handle, const struct ble_gatt_err
         conn->state = NimBLEConnectionState::READY;
         conn->discovery_complete = true;
 
+        // Save to cache if cache is enabled
+        if (conn->use_cache && !conn->cache_loaded) {
+          global_nimble_proxy->save_service_cache_(conn);
+        }
+
         // Send all discovered services/characteristics/descriptors to Home Assistant
         global_nimble_proxy->send_service_response_(conn);
       }
@@ -1429,6 +1634,15 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
       if (conn == nullptr) {
         ESP_LOGE(TAG, "No available connection slots");
         return;
+      }
+
+      // Set cache mode based on request type
+      if (msg.request_type == api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT_V3_WITHOUT_CACHE) {
+        conn->use_cache = false;
+        ESP_LOGI(TAG, "Cache disabled for this connection (CONNECT_V3_WITHOUT_CACHE)");
+      } else {
+        conn->use_cache = true;
+        ESP_LOGI(TAG, "Cache enabled for this connection");
       }
 
       // Already connected?
@@ -1503,8 +1717,8 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
       break;
 
     case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CLEAR_CACHE:
-      // TODO: Implement cache clearing in Phase 2.5
-      ESP_LOGW(TAG, "Cache clearing not yet implemented");
+      ESP_LOGI(TAG, "Clearing cache for address=%012llX", msg.address);
+      this->clear_service_cache_(msg.address);
       break;
 
     default:

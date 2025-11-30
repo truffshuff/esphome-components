@@ -72,6 +72,10 @@ struct NimBLEConnection {
   int current_char_idx{-1};
   bool discovery_complete{false};
 
+  // Cache management
+  bool cache_loaded{false};
+  bool use_cache{true};
+
   // Security
   bool encrypted{false};
   bool bonded{false};
@@ -238,6 +242,12 @@ class NimBLEProxy : public Component {
   static std::array<uint64_t, 2> nimble_uuid_to_api_(const ble_uuid_any_t *uuid);
   static ble_uuid_any_t api_uuid_to_nimble_(const std::array<uint64_t, 2> &uuid);
   static uint16_t find_cccd_handle_(NimBLEConnection *conn, uint16_t char_handle);
+
+  // Service cache helpers (Phase 2.5)
+  bool save_service_cache_(NimBLEConnection *conn);
+  bool load_service_cache_(NimBLEConnection *conn);
+  bool clear_service_cache_(uint64_t address);
+  std::string get_cache_key_(uint64_t address);
 
   // NimBLE callbacks
   static int gap_event_handler_(struct ble_gap_event *event, void *arg);
