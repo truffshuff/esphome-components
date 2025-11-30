@@ -928,22 +928,66 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
   ESP_LOGI(TAG, "Sending service discovery results: %d services, %d characteristics, %d descriptors",
            conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
 
-  // Send all services
+  auto *api_connection = static_cast<esphome::api::APIConnection *>(api_conn);
+
+  // Build the nested service structure
+  api::BluetoothGATTGetServicesResponse resp;
+  resp.address = conn->address;
+
+  // Iterate through services
   for (const auto &service : conn->services) {
-    auto uuid = nimble_uuid_to_api_(&service.uuid);
-    send_gatt_services_response(api_conn, conn->address, service.start_handle, uuid, true);
+    api::BluetoothGATTService service_resp;
+    auto service_uuid = nimble_uuid_to_api_(&service.uuid);
+    fill_gatt_uuid(service_resp.uuid, service_resp.short_uuid, service_uuid);
+    service_resp.handle = service.start_handle;
+
+    // Find all characteristics belonging to this service
+    for (const auto &characteristic : conn->characteristics) {
+      if (characteristic.def_handle >= service.start_handle &&
+          characteristic.def_handle <= service.end_handle) {
+
+        api::BluetoothGATTCharacteristic char_resp;
+        auto char_uuid = nimble_uuid_to_api_(&characteristic.uuid);
+        fill_gatt_uuid(char_resp.uuid, char_resp.short_uuid, char_uuid);
+        char_resp.handle = characteristic.val_handle;
+        char_resp.properties = characteristic.properties;
+
+        // Find all descriptors belonging to this characteristic
+        for (const auto &descriptor : conn->descriptors) {
+          // Descriptors are between this char's val_handle and the next char's def_handle
+          uint16_t char_end_handle = service.end_handle;
+
+          // Find the next characteristic to determine the end boundary
+          for (const auto &next_char : conn->characteristics) {
+            if (next_char.def_handle > characteristic.def_handle &&
+                next_char.def_handle < char_end_handle) {
+              char_end_handle = next_char.def_handle - 1;
+              break;
+            }
+          }
+
+          if (descriptor.handle > characteristic.val_handle &&
+              descriptor.handle <= char_end_handle) {
+
+            api::BluetoothGATTDescriptor desc_resp;
+            auto desc_uuid = nimble_uuid_to_api_(&descriptor.uuid);
+            fill_gatt_uuid(desc_resp.uuid, desc_resp.short_uuid, desc_uuid);
+            desc_resp.handle = descriptor.handle;
+
+            char_resp.descriptors.push_back(desc_resp);
+          }
+        }
+
+        service_resp.characteristics.push_back(char_resp);
+      }
+    }
+
+    resp.services.push_back(service_resp);
   }
 
-  // Send all characteristics
-  for (const auto &characteristic : conn->characteristics) {
-    auto uuid = nimble_uuid_to_api_(&characteristic.uuid);
-    send_gatt_services_response(api_conn, conn->address, characteristic.val_handle, uuid, false);
-  }
-
-  // Send all descriptors
-  for (const auto &descriptor : conn->descriptors) {
-    auto uuid = nimble_uuid_to_api_(&descriptor.uuid);
-    send_gatt_services_response(api_conn, conn->address, descriptor.handle, uuid, false);
+  // Send the complete response
+  if (!api_connection->send_message(resp, api::BluetoothGATTGetServicesResponse::MESSAGE_TYPE)) {
+    ESP_LOGW(TAG, "Failed to send GATT services response");
   }
 
   // Send completion message

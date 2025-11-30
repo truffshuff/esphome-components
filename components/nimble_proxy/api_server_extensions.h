@@ -148,31 +148,16 @@ inline void send_gatt_error(
   }
 }
 
-// Helper to send GATT service discovery response to the connected API client
-inline void send_gatt_services_response(
-    void *api_connection,
-    uint64_t address,
-    uint16_t handle,
-    const std::array<uint64_t, 2> &uuid,
-    bool is_primary) {
-
-  if (api_connection == nullptr) {
-    ESP_LOGV("nimble_proxy", "No API connection to send GATT services response to");
-    return;
-  }
-
-  // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-
-  // Build and send the response
-  api::BluetoothGATTGetServicesResponse resp;
-  resp.address = address;
-  resp.handle = handle;
-  resp.uuid[0] = uuid[0];
-  resp.uuid[1] = uuid[1];
-
-  if (!conn->send_message(resp, api::BluetoothGATTGetServicesResponse::MESSAGE_TYPE)) {
-    ESP_LOGW("nimble_proxy", "Failed to send GATT services response to API connection %p", api_connection);
+// Helper to fill UUID fields in GATT messages
+inline void fill_gatt_uuid(std::array<uint64_t, 2> &uuid_field, uint64_t &short_uuid, const std::array<uint64_t, 2> &uuid) {
+  // Check if this is a short UUID (16 or 32-bit)
+  if (uuid[1] == 0 && uuid[0] <= 0xFFFFFFFF) {
+    // Use short UUID for 16 or 32-bit UUIDs
+    short_uuid = uuid[0];
+  } else {
+    // Use 128-bit UUID
+    uuid_field[0] = uuid[0];
+    uuid_field[1] = uuid[1];
   }
 }
 
