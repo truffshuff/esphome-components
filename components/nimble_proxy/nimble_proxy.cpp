@@ -675,9 +675,67 @@ void NimBLEProxy::handle_gap_disconnect_(struct ble_gap_event *event, NimBLEConn
 }
 
 void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnection *conn) {
-  // TODO: Implement in Phase 2.4
-  ESP_LOGV(TAG, "Notification received; conn_handle=%d attr_handle=%d",
-           event->notify_rx.conn_handle, event->notify_rx.attr_handle);
+  ESP_LOGV(TAG, "Notification received; conn_handle=%d attr_handle=%d indication=%d",
+           event->notify_rx.conn_handle, event->notify_rx.attr_handle,
+           event->notify_rx.indication);
+
+  // If conn is null, try to find it by handle
+  if (conn == nullptr) {
+    conn = this->get_connection_by_handle_(event->notify_rx.conn_handle);
+  }
+
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Notification received for unknown connection handle %d",
+             event->notify_rx.conn_handle);
+    return;
+  }
+
+  // Check if we're subscribed to this handle
+  if (conn->subscribed_handles.find(event->notify_rx.attr_handle) == conn->subscribed_handles.end()) {
+    ESP_LOGV(TAG, "Received notification for unsubscribed handle %d", event->notify_rx.attr_handle);
+    // Still forward it - Home Assistant might want it
+  }
+
+#ifdef USE_API
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    api_conn = this->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGV(TAG, "No API connection to forward notification");
+    return;
+  }
+
+  // Extract notification data from os_mbuf
+  if (event->notify_rx.om != nullptr) {
+    uint16_t data_len = OS_MBUF_PKTLEN(event->notify_rx.om);
+
+    // Allocate temporary buffer for the data
+    uint8_t *data = new uint8_t[data_len];
+
+    // Copy data from mbuf chain
+    int rc = os_mbuf_copydata(event->notify_rx.om, 0, data_len, data);
+    if (rc != 0) {
+      ESP_LOGE(TAG, "Failed to copy notification data from mbuf; rc=%d", rc);
+      delete[] data;
+      return;
+    }
+
+    ESP_LOGD(TAG, "Forwarding notification: handle=%d len=%d",
+             event->notify_rx.attr_handle, data_len);
+
+    // Send notification to Home Assistant
+    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, data, data_len);
+
+    // Clean up
+    delete[] data;
+  } else {
+    ESP_LOGV(TAG, "Notification with no data");
+    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, nullptr, 0);
+  }
+#endif
 }
 
 //=============================================================================
@@ -998,7 +1056,56 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
 }
 
 uint16_t NimBLEProxy::find_cccd_handle_(NimBLEConnection *conn, uint16_t char_handle) {
-  // TODO: Implement in Phase 2.4
+  if (conn == nullptr) {
+    return 0;
+  }
+
+  // CCCD UUID: 0x2902 (Client Characteristic Configuration Descriptor)
+  const uint16_t CCCD_UUID = 0x2902;
+
+  // Find the characteristic with this handle
+  int char_idx = -1;
+  for (size_t i = 0; i < conn->characteristics.size(); i++) {
+    if (conn->characteristics[i].val_handle == char_handle) {
+      char_idx = i;
+      break;
+    }
+  }
+
+  if (char_idx < 0) {
+    ESP_LOGW(TAG, "Characteristic with handle %d not found", char_handle);
+    return 0;
+  }
+
+  const auto &characteristic = conn->characteristics[char_idx];
+
+  // Calculate the end handle for this characteristic
+  uint16_t char_end_handle;
+  if (char_idx + 1 < (int)conn->characteristics.size()) {
+    char_end_handle = conn->characteristics[char_idx + 1].def_handle - 1;
+  } else {
+    // This is the last characteristic, find the service's end handle
+    char_end_handle = 0xFFFF;
+    for (const auto &svc : conn->services) {
+      if (characteristic.def_handle >= svc.start_handle && characteristic.def_handle <= svc.end_handle) {
+        char_end_handle = svc.end_handle;
+        break;
+      }
+    }
+  }
+
+  // Search for CCCD descriptor within this characteristic's range
+  for (const auto &descriptor : conn->descriptors) {
+    if (descriptor.handle > characteristic.val_handle && descriptor.handle <= char_end_handle) {
+      // Check if this is the CCCD descriptor
+      if (descriptor.uuid.u.type == BLE_UUID_TYPE_16 && descriptor.uuid.u16.value == CCCD_UUID) {
+        ESP_LOGD(TAG, "Found CCCD handle %d for characteristic handle %d", descriptor.handle, char_handle);
+        return descriptor.handle;
+      }
+    }
+  }
+
+  ESP_LOGW(TAG, "CCCD not found for characteristic handle %d", char_handle);
   return 0;
 }
 
@@ -1106,6 +1213,50 @@ int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error 
            conn_handle, attr ? attr->handle : 0);
 
   // For writes, we send an empty read response to indicate success
+  // (ESPHome API uses BluetoothGATTReadResponse for write confirmations)
+  send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+#endif
+
+  return 0;
+}
+
+int NimBLEProxy::on_subscribe_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                                  struct ble_gatt_attr *attr, void *arg) {
+#ifdef USE_API
+  if (global_nimble_proxy == nullptr) {
+    ESP_LOGW(TAG, "global_nimble_proxy is null in on_subscribe_cb_");
+    return 0;
+  }
+
+  // arg contains the connection pointer
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Connection pointer is null in on_subscribe_cb_");
+    return 0;
+  }
+
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
+    api_conn = global_nimble_proxy->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send subscribe response");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    ESP_LOGE(TAG, "CCCD write failed; conn_handle=%d status=%d", conn_handle, error->status);
+    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    return 0;
+  }
+
+  ESP_LOGI(TAG, "CCCD write success; conn_handle=%d handle=%d",
+           conn_handle, attr ? attr->handle : 0);
+
+  // For CCCD writes (subscribe/unsubscribe), we send an empty read response to indicate success
   // (ESPHome API uses BluetoothGATTReadResponse for write confirmations)
   send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
 #endif
@@ -1652,9 +1803,105 @@ void NimBLEProxy::bluetooth_gatt_send_services(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
-  // TODO: Implement in Phase 2.4
-  ESP_LOGW(TAG, "bluetooth_gatt_notify not yet implemented (address=%012llX, handle=%d)",
-           msg.address, msg.handle);
+  ESP_LOGI(TAG, "bluetooth_gatt_notify: address=%012llX handle=%d enable=%d",
+           msg.address, msg.handle, msg.enable);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGE(TAG, "Connection not found for address=%012llX", msg.address);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOTCONN);
+    }
+#endif
+    return;
+  }
+
+  // Verify connection is ready for operations
+  if (conn->state != NimBLEConnectionState::READY &&
+      conn->state != NimBLEConnectionState::CONNECTED) {
+    ESP_LOGW(TAG, "Connection not ready for notification subscribe; state=%d", (int)conn->state);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_EBUSY);
+    }
+#endif
+    return;
+  }
+
+  // Find the CCCD handle for this characteristic
+  uint16_t cccd_handle = this->find_cccd_handle_(conn, msg.handle);
+  if (cccd_handle == 0) {
+    ESP_LOGE(TAG, "CCCD not found for characteristic handle %d", msg.handle);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOENT);
+    }
+#endif
+    return;
+  }
+
+  // Prepare CCCD value (2 bytes)
+  // Bit 0: Notifications enabled (0x0001)
+  // Bit 1: Indications enabled (0x0002)
+  uint8_t cccd_value[2];
+  if (msg.enable) {
+    // Enable notifications (0x0001)
+    cccd_value[0] = 0x01;
+    cccd_value[1] = 0x00;
+  } else {
+    // Disable notifications (0x0000)
+    cccd_value[0] = 0x00;
+    cccd_value[1] = 0x00;
+  }
+
+  ESP_LOGI(TAG, "Writing CCCD handle %d with value 0x%02X%02X for characteristic %d",
+           cccd_handle, cccd_value[1], cccd_value[0], msg.handle);
+
+  // Write to CCCD descriptor to enable/disable notifications
+  int rc = ble_gattc_write_flat(conn->conn_handle, cccd_handle,
+                                cccd_value, sizeof(cccd_value),
+                                NimBLEProxy::on_subscribe_cb_, conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed to write CCCD; rc=%d", rc);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, rc);
+    }
+#endif
+    return;
+  }
+
+  // Track subscription state
+  if (msg.enable) {
+    conn->subscribed_handles.insert(msg.handle);
+  } else {
+    conn->subscribed_handles.erase(msg.handle);
+  }
+
+  ESP_LOGI(TAG, "Notification %s for handle %d (total subscriptions: %d)",
+           msg.enable ? "enabled" : "disabled", msg.handle, conn->subscribed_handles.size());
 }
 
 // Explicit template instantiations for all API message types
