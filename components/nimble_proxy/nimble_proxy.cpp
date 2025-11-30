@@ -963,8 +963,14 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
   }
 }
 
-// Explicit template instantiation for API message types
+// Explicit template instantiations for all API message types
 template void NimBLEProxy::bluetooth_device_request(const api::BluetoothDeviceRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_read(const api::BluetoothGATTReadRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_write(const api::BluetoothGATTWriteRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_read_descriptor(const api::BluetoothGATTReadDescriptorRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_write_descriptor(const api::BluetoothGATTWriteDescriptorRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_send_services(const api::BluetoothGATTGetServicesRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_notify(const api::BluetoothGATTNotifyRequest &msg);
 #endif
 
 }  // namespace nimble_proxy
