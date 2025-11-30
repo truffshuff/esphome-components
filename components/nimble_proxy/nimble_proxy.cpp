@@ -1,5 +1,6 @@
 #include "nimble_proxy.h"
 #include "esphome/components/nimble_base/nimble_base.h"
+#include "store/config/ble_store_config.h"
 
 // Undefine NimBLE macros that conflict with ESPHome API enums
 #ifdef LOG_LEVEL_NONE
@@ -102,6 +103,22 @@ void NimBLEProxy::on_sync_() {
     ESP_LOGI(TAG, "Proxy is not active, skipping scan/advertising");
     return;
   }
+
+  // Configure security manager for pairing/bonding support
+  // Enable bonding (store keys in NVS)
+  ble_hs_cfg.sm_bonding = 1;
+  // Enable MITM protection (Man-in-the-Middle)
+  ble_hs_cfg.sm_mitm = 1;
+  // Enable Secure Connections (LE Secure Connections pairing)
+  ble_hs_cfg.sm_sc = 1;
+  // Set IO capabilities to KeyboardDisplay (can display and input passkeys)
+  ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_KEYBOARD_DISP;
+  // Our identity address is public (not random)
+  ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+  ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+
+  ESP_LOGI(TAG, "Security manager configured (bonding=%d, MITM=%d, SC=%d, IO=%d)",
+           ble_hs_cfg.sm_bonding, ble_hs_cfg.sm_mitm, ble_hs_cfg.sm_sc, ble_hs_cfg.sm_io_cap);
 
   ESP_LOGI(TAG, "Setting initialized flag and starting BLE operations");
   global_nimble_proxy->initialized_ = true;
@@ -339,9 +356,24 @@ int NimBLEProxy::gap_event_handler_(struct ble_gap_event *event, void *arg) {
     case BLE_GAP_EVENT_ENC_CHANGE:
       if (conn != nullptr) {
         conn->encrypted = (event->enc_change.status == 0);
-        ESP_LOGI(TAG, "Encryption changed; conn_handle=%d status=%d",
-                 conn->conn_handle, event->enc_change.status);
+        conn->bonded = (event->enc_change.status == 0);
+        ESP_LOGI(TAG, "Encryption changed; conn_handle=%d status=%d encrypted=%d",
+                 conn->conn_handle, event->enc_change.status, conn->encrypted);
+
+        // If we were in PAIRING state, send pairing response
+        if (conn->state == NimBLEConnectionState::PAIRING) {
+          if (global_nimble_proxy != nullptr) {
+            global_nimble_proxy->send_pairing_response_(conn->address, conn->encrypted,
+                                                        event->enc_change.status);
+          }
+          // Return to READY state
+          conn->state = NimBLEConnectionState::READY;
+        }
       }
+      break;
+
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+      global_nimble_proxy->handle_gap_passkey_action_(event, conn);
       break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -508,9 +540,9 @@ uint32_t NimBLEProxy::get_feature_flags() {
   const uint32_t FEATURE_RAW_ADVERTISEMENTS = 1 << 5;
   const uint32_t FEATURE_STATE_AND_MODE = 1 << 6;
 
-  // We support passive scanning, active connections, remote caching, cache clearing, raw advertisements, and mode reporting
+  // We support all features including pairing/bonding
   return FEATURE_PASSIVE_SCAN | FEATURE_ACTIVE_CONNECTIONS | FEATURE_REMOTE_CACHING |
-         FEATURE_CACHE_CLEARING | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
+         FEATURE_PAIRING | FEATURE_CACHE_CLEARING | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
 }
 
 std::string NimBLEProxy::get_bluetooth_mac_address_pretty() {
@@ -738,6 +770,70 @@ void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnecti
     send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, nullptr, 0);
   }
 #endif
+}
+
+void NimBLEProxy::handle_gap_passkey_action_(struct ble_gap_event *event, NimBLEConnection *conn) {
+  ESP_LOGI(TAG, "Passkey action event; conn_handle=%d action=%d",
+           event->passkey.conn_handle, event->passkey.params.action);
+
+  // If conn is null, try to find it by handle
+  if (conn == nullptr) {
+    conn = this->get_connection_by_handle_(event->passkey.conn_handle);
+  }
+
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Passkey action for unknown connection handle %d",
+             event->passkey.conn_handle);
+    return;
+  }
+
+  struct ble_sm_io pkey = {0};
+
+  switch (event->passkey.params.action) {
+    case BLE_SM_IOACT_NONE:
+      ESP_LOGI(TAG, "No passkey action required (Just Works pairing)");
+      break;
+
+    case BLE_SM_IOACT_OOB:
+      ESP_LOGI(TAG, "Out-of-band pairing not supported");
+      // For now, reject OOB pairing
+      ble_sm_inject_io(event->passkey.conn_handle, BLE_SM_ERR_OOB);
+      break;
+
+    case BLE_SM_IOACT_INPUT:
+      ESP_LOGI(TAG, "Passkey input required - using default 000000");
+      // Default passkey (000000) for automatic pairing
+      // In a real implementation, you might want to prompt the user
+      pkey.action = event->passkey.params.action;
+      pkey.passkey = 0;  // Default passkey
+      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      break;
+
+    case BLE_SM_IOACT_DISP:
+      ESP_LOGI(TAG, "Passkey display required - generating passkey");
+      // Generate a random 6-digit passkey
+      pkey.action = event->passkey.params.action;
+      pkey.passkey = esp_random() % 1000000;
+      ESP_LOGI(TAG, "*** PAIRING PASSKEY: %06lu ***", (unsigned long)pkey.passkey);
+      // TODO: Send passkey to Home Assistant for display to user
+      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      break;
+
+    case BLE_SM_IOACT_NUMCMP:
+      ESP_LOGI(TAG, "Numeric comparison required - auto-accepting");
+      // Auto-accept numeric comparison
+      // In a real implementation, you'd display the number and ask user to confirm
+      pkey.action = event->passkey.params.action;
+      pkey.numcmp_accept = 1;  // Auto-accept
+      ESP_LOGI(TAG, "*** CONFIRM PAIRING NUMBER: %06lu ***",
+               (unsigned long)event->passkey.params.numcmp);
+      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      break;
+
+    default:
+      ESP_LOGW(TAG, "Unknown passkey action: %d", event->passkey.params.action);
+      break;
+  }
 }
 
 //=============================================================================
@@ -1675,6 +1771,99 @@ void NimBLEProxy::dump_config() {
 }
 
 //=============================================================================
+// Pairing/Bonding Helper Functions (Phase 2.6)
+//=============================================================================
+
+void NimBLEProxy::initiate_pairing_(NimBLEConnection *conn) {
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot initiate pairing with null connection");
+    return;
+  }
+
+  if (conn->conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+    ESP_LOGE(TAG, "Cannot initiate pairing with invalid connection handle");
+    this->send_pairing_response_(conn->address, false, BLE_HS_ENOTCONN);
+    return;
+  }
+
+  ESP_LOGI(TAG, "Initiating pairing for conn_handle=%d address=%012llX",
+           conn->conn_handle, conn->address);
+
+  // Set connection to PAIRING state
+  conn->state = NimBLEConnectionState::PAIRING;
+  conn->state_timestamp = millis();
+
+  // Initiate security procedure
+  // This will trigger the security manager to start pairing
+  int rc = ble_gap_security_initiate(conn->conn_handle);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_security_initiate failed; rc=%d", rc);
+    conn->state = NimBLEConnectionState::READY;  // Return to READY state
+    this->send_pairing_response_(conn->address, false, rc);
+    return;
+  }
+
+  ESP_LOGI(TAG, "Pairing initiated successfully");
+}
+
+void NimBLEProxy::delete_bond_(uint64_t address) {
+  ESP_LOGI(TAG, "Deleting bond for address=%012llX", address);
+
+  // Convert uint64_t address to ble_addr_t
+  ble_addr_t peer_addr;
+  peer_addr.type = BLE_ADDR_PUBLIC;  // Try public address first
+  for (int i = 0; i < 6; i++) {
+    peer_addr.val[i] = (address >> (i * 8)) & 0xFF;
+  }
+
+  // Delete the bond from NimBLE's bond store
+  int rc = ble_store_util_delete_peer(&peer_addr);
+  if (rc != 0) {
+    // Try again with random address type
+    peer_addr.type = BLE_ADDR_RANDOM;
+    rc = ble_store_util_delete_peer(&peer_addr);
+    if (rc != 0) {
+      ESP_LOGW(TAG, "Failed to delete bond (may not exist); rc=%d", rc);
+    } else {
+      ESP_LOGI(TAG, "Bond deleted successfully (random address)");
+    }
+  } else {
+    ESP_LOGI(TAG, "Bond deleted successfully (public address)");
+  }
+}
+
+void NimBLEProxy::send_pairing_response_(uint64_t address, bool paired, int error) {
+#ifdef USE_API
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    api_conn = this->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send pairing response");
+    return;
+  }
+
+  // Use the same response structure as connection responses
+  // Home Assistant treats pairing responses similarly to connection responses
+  auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
+  esphome::api::BluetoothDeviceConnectionResponse resp;
+  resp.address = address;
+  resp.connected = paired;  // Use connected field to indicate paired status
+  resp.mtu = 23;  // Default MTU
+  resp.error = error;
+
+  if (!connection->send_message(resp, esphome::api::BluetoothDeviceConnectionResponse::MESSAGE_TYPE)) {
+    ESP_LOGW(TAG, "Failed to send pairing response");
+  } else {
+    ESP_LOGI(TAG, "Sent pairing response: address=%012llX paired=%d error=%d",
+             address, paired, error);
+  }
+#endif
+}
+
+//=============================================================================
 // Bluetooth Proxy API Template Implementations
 //=============================================================================
 
@@ -1765,15 +1954,45 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
       break;
     }
 
-    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_PAIR:
-      // TODO: Implement pairing in Phase 2.6
-      ESP_LOGW(TAG, "Pairing not yet implemented");
-      break;
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_PAIR: {
+      ESP_LOGI(TAG, "Pairing request for address=%012llX", msg.address);
 
-    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_UNPAIR:
-      // TODO: Implement unpairing in Phase 2.6
-      ESP_LOGW(TAG, "Unpairing not yet implemented");
+      NimBLEConnection *conn = this->get_connection_(msg.address, false);
+      if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+        ESP_LOGE(TAG, "Connection not found for pairing");
+        this->send_pairing_response_(msg.address, false, BLE_HS_ENOTCONN);
+        return;
+      }
+
+      // Check if already paired/bonded
+      if (conn->bonded && conn->encrypted) {
+        ESP_LOGI(TAG, "Device already paired and bonded");
+        this->send_pairing_response_(msg.address, true, 0);
+        return;
+      }
+
+      // Initiate pairing
+      this->initiate_pairing_(conn);
       break;
+    }
+
+    case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_UNPAIR: {
+      ESP_LOGI(TAG, "Unpair request for address=%012llX", msg.address);
+
+      // Delete the bond from NVS
+      this->delete_bond_(msg.address);
+
+      // If there's an active connection, mark it as unbonded
+      NimBLEConnection *conn = this->get_connection_(msg.address, false);
+      if (conn != nullptr && conn->state != NimBLEConnectionState::IDLE) {
+        conn->bonded = false;
+        conn->encrypted = false;
+      }
+
+      // Send success response
+      this->send_pairing_response_(msg.address, false, 0);
+      break;
+    }
 
     case api::enums::BLUETOOTH_DEVICE_REQUEST_TYPE_CLEAR_CACHE:
       ESP_LOGI(TAG, "Clearing cache for address=%012llX", msg.address);

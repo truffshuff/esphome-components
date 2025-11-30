@@ -213,6 +213,7 @@ class NimBLEProxy : public Component {
   void handle_gap_connect_(struct ble_gap_event *event, NimBLEConnection *conn);
   void handle_gap_disconnect_(struct ble_gap_event *event, NimBLEConnection *conn);
   void handle_gap_notify_(struct ble_gap_event *event, NimBLEConnection *conn);
+  void handle_gap_passkey_action_(struct ble_gap_event *event, NimBLEConnection *conn);
 
   // Service discovery helpers (Phase 2.2)
   void start_service_discovery_(NimBLEConnection *conn);
@@ -248,6 +249,11 @@ class NimBLEProxy : public Component {
   bool load_service_cache_(NimBLEConnection *conn);
   bool clear_service_cache_(uint64_t address);
   std::string get_cache_key_(uint64_t address);
+
+  // Pairing/bonding helpers (Phase 2.6)
+  void initiate_pairing_(NimBLEConnection *conn);
+  void delete_bond_(uint64_t address);
+  void send_pairing_response_(uint64_t address, bool paired, int error = 0);
 
   // NimBLE callbacks
   static int gap_event_handler_(struct ble_gap_event *event, void *arg);
