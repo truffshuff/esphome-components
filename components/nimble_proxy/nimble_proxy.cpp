@@ -451,10 +451,11 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 
   this->adv_buffer_count_++;
 
-  // Send when buffer is full or after 100ms timeout
+  // Send when buffer is full or after 250ms timeout
+  // Increased timeout reduces log spam and network overhead at cost of slightly higher latency
   uint32_t now = millis();
   if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE ||
-      (this->adv_buffer_count_ > 0 && (now - this->last_send_time_) >= 100)) {
+      (this->adv_buffer_count_ > 0 && (now - this->last_send_time_) >= 250)) {
     this->send_advertisements_();
   }
 #else
@@ -505,7 +506,7 @@ void NimBLEProxy::loop() {
   // Send any pending advertisements periodically
   if (this->adv_buffer_count_ > 0) {
     uint32_t now = millis();
-    if ((now - this->last_send_time_) >= 100) {
+    if ((now - this->last_send_time_) >= 250) {
       this->send_advertisements_();
     }
   }
