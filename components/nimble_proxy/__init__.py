@@ -68,7 +68,9 @@ async def to_code(config):
     config = _validate_config(config)
 
     # Provide sane defaults for API compile-time constants if not set
-    cg.add_build_flag("-DBLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE=5")
+    # Reduced from 5 to 2 to prevent protocol buffer encoding assertion failures
+    # Large batches can exceed TCP send buffer capacity causing proto.h:820 crashes
+    cg.add_build_flag("-DBLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE=2")
     cg.add_build_flag("-DBLUETOOTH_PROXY_MAX_CONNECTIONS=%d" % config[CONF_CONNECTION_SLOTS])
 
     var = cg.new_Pvariable(config[CONF_ID])
