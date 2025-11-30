@@ -625,8 +625,8 @@ void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnect
       // Send success response to Home Assistant
       this->send_connection_response_(conn, true, 0);
 
-      // TODO Phase 2.2: Start service discovery
-      // this->start_service_discovery_(conn);
+      // Start service discovery automatically
+      this->start_service_discovery_(conn);
     } else {
       ESP_LOGW(TAG, "Connection established but conn pointer is null");
     }
@@ -791,22 +791,166 @@ ble_uuid_any_t NimBLEProxy::api_uuid_to_nimble_(const std::array<uint64_t, 2> &u
   return result;
 }
 
-// Stub implementations for Phase 2.2+ functions (will be implemented later)
+// Service discovery helper functions
 void NimBLEProxy::start_service_discovery_(NimBLEConnection *conn) {
-  // TODO: Implement in Phase 2.2
-  ESP_LOGW(TAG, "Service discovery not yet implemented");
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot start service discovery with null connection");
+    return;
+  }
+
+  if (conn->conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+    ESP_LOGE(TAG, "Cannot start service discovery with invalid connection handle");
+    return;
+  }
+
+  // Clear any previous discovery data
+  conn->services.clear();
+  conn->characteristics.clear();
+  conn->descriptors.clear();
+  conn->current_service_idx = -1;
+  conn->current_char_idx = -1;
+  conn->discovery_complete = false;
+
+  conn->state = NimBLEConnectionState::DISCOVERING_SERVICES;
+  conn->state_timestamp = millis();
+
+  ESP_LOGI(TAG, "Starting service discovery for conn_handle=%d", conn->conn_handle);
+
+  // Start discovering all services
+  int rc = ble_gattc_disc_all_svcs(conn->conn_handle, NimBLEProxy::on_disc_svc_cb_, conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed to start service discovery; rc=%d", rc);
+    conn->state = NimBLEConnectionState::ERROR;
+  }
 }
 
 void NimBLEProxy::start_char_discovery_(NimBLEConnection *conn) {
-  // TODO: Implement in Phase 2.2
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot start characteristic discovery with null connection");
+    return;
+  }
+
+  if (conn->current_service_idx < 0 || conn->current_service_idx >= (int)conn->services.size()) {
+    ESP_LOGE(TAG, "Invalid service index for characteristic discovery: %d", conn->current_service_idx);
+    conn->state = NimBLEConnectionState::ERROR;
+    return;
+  }
+
+  const auto &service = conn->services[conn->current_service_idx];
+
+  ESP_LOGD(TAG, "Discovering characteristics for service %d (handles %d-%d)",
+           conn->current_service_idx, service.start_handle, service.end_handle);
+
+  // Discover all characteristics in this service
+  int rc = ble_gattc_disc_all_chrs(conn->conn_handle,
+                                   service.start_handle,
+                                   service.end_handle,
+                                   NimBLEProxy::on_disc_chr_cb_,
+                                   conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed to start characteristic discovery; rc=%d", rc);
+    conn->state = NimBLEConnectionState::ERROR;
+  }
 }
 
 void NimBLEProxy::start_dsc_discovery_(NimBLEConnection *conn) {
-  // TODO: Implement in Phase 2.2
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot start descriptor discovery with null connection");
+    return;
+  }
+
+  if (conn->current_char_idx < 0 || conn->current_char_idx >= (int)conn->characteristics.size()) {
+    ESP_LOGE(TAG, "Invalid characteristic index for descriptor discovery: %d", conn->current_char_idx);
+    conn->state = NimBLEConnectionState::ERROR;
+    return;
+  }
+
+  const auto &characteristic = conn->characteristics[conn->current_char_idx];
+
+  // Calculate end handle for this characteristic
+  // End handle is either the next characteristic's handle - 1, or the service's end handle
+  uint16_t end_handle;
+  if (conn->current_char_idx + 1 < (int)conn->characteristics.size()) {
+    end_handle = conn->characteristics[conn->current_char_idx + 1].def_handle - 1;
+  } else {
+    // This is the last characteristic, find the service's end handle
+    end_handle = 0xFFFF;  // Default to max
+    for (const auto &svc : conn->services) {
+      if (characteristic.def_handle >= svc.start_handle && characteristic.def_handle <= svc.end_handle) {
+        end_handle = svc.end_handle;
+        break;
+      }
+    }
+  }
+
+  ESP_LOGV(TAG, "Discovering descriptors for characteristic %d (handles %d-%d)",
+           conn->current_char_idx, characteristic.val_handle, end_handle);
+
+  // Discover all descriptors for this characteristic
+  int rc = ble_gattc_disc_all_dscs(conn->conn_handle,
+                                   characteristic.val_handle,
+                                   end_handle,
+                                   NimBLEProxy::on_disc_dsc_cb_,
+                                   conn);
+  if (rc != 0) {
+    // BLE_HS_ENOENT means no descriptors to discover - this is OK
+    if (rc == BLE_HS_ENOENT) {
+      ESP_LOGV(TAG, "No descriptors for characteristic %d", conn->current_char_idx);
+      // Simulate completion callback
+      struct ble_gatt_error error;
+      error.status = BLE_HS_EDONE;
+      on_disc_dsc_cb_(conn->conn_handle, &error, characteristic.val_handle, nullptr, conn);
+    } else {
+      ESP_LOGE(TAG, "Failed to start descriptor discovery; rc=%d", rc);
+      conn->state = NimBLEConnectionState::ERROR;
+    }
+  }
 }
 
 void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
-  // TODO: Implement in Phase 2.2
+#ifdef USE_API
+  if (conn == nullptr) {
+    ESP_LOGE(TAG, "Cannot send service response with null connection");
+    return;
+  }
+
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    api_conn = this->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send service response");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Sending service discovery results: %d services, %d characteristics, %d descriptors",
+           conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
+
+  // Send all services
+  for (const auto &service : conn->services) {
+    auto uuid = nimble_uuid_to_api_(&service.uuid);
+    send_gatt_services_response(api_conn, conn->address, service.start_handle, uuid, true);
+  }
+
+  // Send all characteristics
+  for (const auto &characteristic : conn->characteristics) {
+    auto uuid = nimble_uuid_to_api_(&characteristic.uuid);
+    send_gatt_services_response(api_conn, conn->address, characteristic.val_handle, uuid, false);
+  }
+
+  // Send all descriptors
+  for (const auto &descriptor : conn->descriptors) {
+    auto uuid = nimble_uuid_to_api_(&descriptor.uuid);
+    send_gatt_services_response(api_conn, conn->address, descriptor.handle, uuid, false);
+  }
+
+  // Send completion message
+  send_gatt_services_done_response(api_conn, conn->address);
+
+  ESP_LOGI(TAG, "Service discovery complete for address=%012llX", conn->address);
+#endif
 }
 
 uint16_t NimBLEProxy::find_cccd_handle_(NimBLEConnection *conn, uint16_t char_handle) {
@@ -828,19 +972,131 @@ int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error 
 
 int NimBLEProxy::on_disc_svc_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                                  const struct ble_gatt_svc *service, void *arg) {
-  // TODO: Implement in Phase 2.2
+  if (global_nimble_proxy == nullptr) {
+    return 0;
+  }
+
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Service discovery callback with null connection");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    if (error->status == BLE_HS_EDONE) {
+      // Discovery complete - move to characteristic discovery
+      ESP_LOGI(TAG, "Service discovery complete; found %d services", conn->services.size());
+      conn->state = NimBLEConnectionState::DISCOVERING_CHARS;
+      conn->current_service_idx = 0;
+      global_nimble_proxy->start_char_discovery_(conn);
+    } else {
+      ESP_LOGE(TAG, "Service discovery failed; status=%d", error->status);
+      conn->state = NimBLEConnectionState::ERROR;
+    }
+    return 0;
+  }
+
+  // Store the service
+  conn->services.push_back(*service);
+
+  ESP_LOGD(TAG, "Service discovered: start_handle=%d end_handle=%d UUID=0x%04X",
+           service->start_handle, service->end_handle,
+           (service->uuid.u.type == BLE_UUID_TYPE_16) ? service->uuid.u16.value : 0);
+
   return 0;
 }
 
 int NimBLEProxy::on_disc_chr_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                                  const struct ble_gatt_chr *chr, void *arg) {
-  // TODO: Implement in Phase 2.2
+  if (global_nimble_proxy == nullptr) {
+    return 0;
+  }
+
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Characteristic discovery callback with null connection");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    if (error->status == BLE_HS_EDONE) {
+      // Characteristic discovery complete for this service
+      ESP_LOGD(TAG, "Characteristic discovery complete for service %d", conn->current_service_idx);
+
+      // Move to next service
+      conn->current_service_idx++;
+      if (conn->current_service_idx < (int)conn->services.size()) {
+        // More services to discover characteristics for
+        global_nimble_proxy->start_char_discovery_(conn);
+      } else {
+        // All characteristics discovered - move to descriptor discovery
+        ESP_LOGI(TAG, "All characteristics discovered; found %d characteristics", conn->characteristics.size());
+        conn->state = NimBLEConnectionState::DISCOVERING_DSCS;
+        conn->current_char_idx = 0;
+        global_nimble_proxy->start_dsc_discovery_(conn);
+      }
+    } else {
+      ESP_LOGE(TAG, "Characteristic discovery failed; status=%d", error->status);
+      conn->state = NimBLEConnectionState::ERROR;
+    }
+    return 0;
+  }
+
+  // Store the characteristic
+  conn->characteristics.push_back(*chr);
+
+  ESP_LOGV(TAG, "Characteristic discovered: def_handle=%d val_handle=%d properties=0x%02X",
+           chr->def_handle, chr->val_handle, chr->properties);
+
   return 0;
 }
 
 int NimBLEProxy::on_disc_dsc_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                                  uint16_t chr_val_handle, const struct ble_gatt_dsc *dsc, void *arg) {
-  // TODO: Implement in Phase 2.2
+  if (global_nimble_proxy == nullptr) {
+    return 0;
+  }
+
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Descriptor discovery callback with null connection");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    if (error->status == BLE_HS_EDONE) {
+      // Descriptor discovery complete for this characteristic
+      ESP_LOGV(TAG, "Descriptor discovery complete for characteristic %d", conn->current_char_idx);
+
+      // Move to next characteristic
+      conn->current_char_idx++;
+      if (conn->current_char_idx < (int)conn->characteristics.size()) {
+        // More characteristics to discover descriptors for
+        global_nimble_proxy->start_dsc_discovery_(conn);
+      } else {
+        // All descriptors discovered - discovery complete!
+        ESP_LOGI(TAG, "All descriptors discovered; found %d descriptors", conn->descriptors.size());
+        conn->state = NimBLEConnectionState::READY;
+        conn->discovery_complete = true;
+
+        // Send all discovered services/characteristics/descriptors to Home Assistant
+        global_nimble_proxy->send_service_response_(conn);
+      }
+    } else {
+      ESP_LOGE(TAG, "Descriptor discovery failed; status=%d", error->status);
+      conn->state = NimBLEConnectionState::ERROR;
+    }
+    return 0;
+  }
+
+  // Store the descriptor
+  conn->descriptors.push_back(*dsc);
+
+  ESP_LOGV(TAG, "Descriptor discovered: handle=%d", dsc->handle);
+
   return 0;
 }
 
@@ -994,9 +1250,34 @@ void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_send_services(const T &msg) {
-  // TODO: Implement in Phase 2.2
-  ESP_LOGW(TAG, "bluetooth_gatt_send_services not yet implemented (address=%012llX)",
-           msg.address);
+  ESP_LOGI(TAG, "bluetooth_gatt_send_services: address=%012llX", msg.address);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGW(TAG, "Connection not found for address=%012llX", msg.address);
+    return;
+  }
+
+  // If discovery is already complete, resend the cached data
+  if (conn->discovery_complete && conn->state == NimBLEConnectionState::READY) {
+    ESP_LOGI(TAG, "Resending cached service data for address=%012llX", msg.address);
+    this->send_service_response_(conn);
+  }
+  // If discovery is in progress, just wait for it to complete
+  else if (conn->state == NimBLEConnectionState::DISCOVERING_SERVICES ||
+           conn->state == NimBLEConnectionState::DISCOVERING_CHARS ||
+           conn->state == NimBLEConnectionState::DISCOVERING_DSCS) {
+    ESP_LOGI(TAG, "Service discovery already in progress for address=%012llX", msg.address);
+  }
+  // If connected but discovery hasn't started, start it now
+  else if (conn->state == NimBLEConnectionState::CONNECTED) {
+    ESP_LOGI(TAG, "Starting service discovery for address=%012llX", msg.address);
+    this->start_service_discovery_(conn);
+  }
+  else {
+    ESP_LOGW(TAG, "Connection not in valid state for service discovery: state=%d", (int)conn->state);
+  }
 }
 
 template<typename T>
