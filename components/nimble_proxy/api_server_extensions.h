@@ -50,5 +50,99 @@ inline void send_scanner_state_to_client(
   }
 }
 
+// Helper to send connection response to the connected API client
+inline void send_connection_response(
+    void *api_connection,
+    uint64_t address,
+    bool connected,
+    uint16_t mtu,
+    int error) {
+
+  if (api_connection == nullptr) {
+    ESP_LOGV("nimble_proxy", "No API connection to send connection response to");
+    return;
+  }
+
+  ESP_LOGD("nimble_proxy", "Sending connection response (address=%012llX, connected=%d, mtu=%d, error=%d) to API client",
+           address, connected, mtu, error);
+
+  // Cast void* back to APIConnection*
+  auto *conn = static_cast<api::APIConnection *>(api_connection);
+
+  // Build and send the response
+  api::BluetoothDeviceConnectionResponse resp;
+  resp.address = address;
+  resp.connected = connected;
+  resp.mtu = mtu;
+  resp.error = error;
+
+  if (!conn->send_message(resp, api::BluetoothDeviceConnectionResponse::MESSAGE_TYPE)) {
+    ESP_LOGW("nimble_proxy", "Failed to send connection response to API connection %p", api_connection);
+  }
+}
+
+// Helper to send GATT read response to the connected API client
+inline void send_gatt_read_response(
+    void *api_connection,
+    uint64_t address,
+    uint16_t handle,
+    const uint8_t *data,
+    size_t len) {
+
+  if (api_connection == nullptr) {
+    ESP_LOGV("nimble_proxy", "No API connection to send GATT read response to");
+    return;
+  }
+
+  ESP_LOGD("nimble_proxy", "Sending GATT read response (address=%012llX, handle=%d, len=%d) to API client",
+           address, handle, len);
+
+  // Cast void* back to APIConnection*
+  auto *conn = static_cast<api::APIConnection *>(api_connection);
+
+  // Build and send the response
+  api::BluetoothGATTReadResponse resp;
+  resp.address = address;
+  resp.handle = handle;
+
+  // Copy data to the response
+  if (data != nullptr && len > 0) {
+    resp.data.assign(data, data + len);
+  }
+
+  if (!conn->send_message(resp, api::BluetoothGATTReadResponse::MESSAGE_TYPE)) {
+    ESP_LOGW("nimble_proxy", "Failed to send GATT read response to API connection %p", api_connection);
+  }
+}
+
+// Helper to send GATT error response to the connected API client
+inline void send_gatt_error(
+    void *api_connection,
+    uint64_t address,
+    uint16_t handle,
+    int error) {
+
+  if (api_connection == nullptr) {
+    ESP_LOGV("nimble_proxy", "No API connection to send GATT error to");
+    return;
+  }
+
+  ESP_LOGD("nimble_proxy", "Sending GATT error (address=%012llX, handle=%d, error=%d) to API client",
+           address, handle, error);
+
+  // Cast void* back to APIConnection*
+  auto *conn = static_cast<api::APIConnection *>(api_connection);
+
+  // Build and send the error response
+  api::BluetoothGATTErrorResponse resp;
+  resp.address = address;
+  resp.handle = handle;
+  resp.error = error;
+
+  if (!conn->send_message(resp, api::BluetoothGATTErrorResponse::MESSAGE_TYPE)) {
+    ESP_LOGW("nimble_proxy", "Failed to send GATT error to API connection %p", api_connection);
+  }
+}
+
 }  // namespace nimble_proxy
 }  // namespace esphome
