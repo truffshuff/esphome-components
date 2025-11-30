@@ -400,6 +400,9 @@ void NimBLEProxy::setup_services_() {
 
 void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 #ifdef USE_API
+  // CRITICAL: Lock mutex for entire function to prevent race with loop()
+  std::lock_guard<std::mutex> lock(this->adv_buffer_mutex_);
+
   if (!this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
     ESP_LOGW(TAG, "Advertisement buffer not allocated, skipping advertisement");
     return;
@@ -408,7 +411,7 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
   // Thread-safe check for API connection
   void *conn = nullptr;
   {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    std::lock_guard<std::mutex> api_lock(this->api_connection_mutex_);
     conn = this->api_connection_;
   }
 
@@ -428,7 +431,7 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
   // Bounds check: prevent buffer overflow BEFORE writing
   if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE) {
     ESP_LOGW(TAG, "Advertisement buffer full, forcing send before adding new advertisement");
-    this->send_advertisements_();
+    this->send_advertisements_();  // Called with mutex held - safe
   }
 
   // Build 64-bit MAC address from 6-byte array
@@ -456,7 +459,7 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
   uint32_t now = millis();
   if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE ||
       (this->adv_buffer_count_ > 0 && (now - this->last_send_time_) >= 250)) {
-    this->send_advertisements_();
+    this->send_advertisements_();  // Called with mutex held - safe
   }
 #else
   // API not available, just log
@@ -466,6 +469,9 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 
 void NimBLEProxy::send_advertisements_() {
 #ifdef USE_API
+  // NOTE: This function assumes adv_buffer_mutex_ is ALREADY held by caller!
+  // It's called from add_advertisement_() and loop(), both with mutex locked.
+
   if (this->adv_buffer_count_ == 0 || !this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
     return;
   }
@@ -504,10 +510,13 @@ void NimBLEProxy::send_advertisements_() {
 
 void NimBLEProxy::loop() {
   // Send any pending advertisements periodically
+  // CRITICAL: Lock mutex to prevent race with add_advertisement_() on NimBLE thread
+  std::lock_guard<std::mutex> lock(this->adv_buffer_mutex_);
+
   if (this->adv_buffer_count_ > 0) {
     uint32_t now = millis();
     if ((now - this->last_send_time_) >= 250) {
-      this->send_advertisements_();
+      this->send_advertisements_();  // Called with mutex held - safe
     }
   }
 }
