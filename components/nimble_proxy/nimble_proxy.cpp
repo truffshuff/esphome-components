@@ -963,6 +963,49 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
   }
 }
 
+// Stub implementations for GATT operations (Phase 2.3+)
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
+  // TODO: Implement in Phase 2.3
+  ESP_LOGW(TAG, "bluetooth_gatt_read not yet implemented (address=%012llX, handle=%d)",
+           msg.address, msg.handle);
+}
+
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
+  // TODO: Implement in Phase 2.3
+  ESP_LOGW(TAG, "bluetooth_gatt_write not yet implemented (address=%012llX, handle=%d)",
+           msg.address, msg.handle);
+}
+
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
+  // TODO: Implement in Phase 2.3
+  ESP_LOGW(TAG, "bluetooth_gatt_read_descriptor not yet implemented (address=%012llX, handle=%d)",
+           msg.address, msg.handle);
+}
+
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
+  // TODO: Implement in Phase 2.3
+  ESP_LOGW(TAG, "bluetooth_gatt_write_descriptor not yet implemented (address=%012llX, handle=%d)",
+           msg.address, msg.handle);
+}
+
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_send_services(const T &msg) {
+  // TODO: Implement in Phase 2.2
+  ESP_LOGW(TAG, "bluetooth_gatt_send_services not yet implemented (address=%012llX)",
+           msg.address);
+}
+
+template<typename T>
+void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
+  // TODO: Implement in Phase 2.4
+  ESP_LOGW(TAG, "bluetooth_gatt_notify not yet implemented (address=%012llX, handle=%d)",
+           msg.address, msg.characteristic_handle);
+}
+
 // Explicit template instantiations for all API message types
 template void NimBLEProxy::bluetooth_device_request(const api::BluetoothDeviceRequest &msg);
 template void NimBLEProxy::bluetooth_gatt_read(const api::BluetoothGATTReadRequest &msg);
