@@ -222,6 +222,10 @@ class NimBLEProxy : public Component {
   static int on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                          struct ble_gatt_attr *attr, void *arg);
 
+  // Notification callbacks (Phase 2.4)
+  static int on_subscribe_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
+                             struct ble_gatt_attr *attr, void *arg);
+
   // Discovery callbacks (Phase 2.2)
   static int on_disc_svc_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                             const struct ble_gatt_svc *service, void *arg);
