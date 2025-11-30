@@ -1003,7 +1003,7 @@ template<typename T>
 void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
   // TODO: Implement in Phase 2.4
   ESP_LOGW(TAG, "bluetooth_gatt_notify not yet implemented (address=%012llX, handle=%d)",
-           msg.address, msg.characteristic_handle);
+           msg.address, msg.handle);
 }
 
 // Explicit template instantiations for all API message types
