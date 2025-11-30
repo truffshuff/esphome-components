@@ -1004,13 +1004,112 @@ uint16_t NimBLEProxy::find_cccd_handle_(NimBLEConnection *conn, uint16_t char_ha
 
 int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                              struct ble_gatt_attr *attr, void *arg) {
-  // TODO: Implement in Phase 2.3
+#ifdef USE_API
+  if (global_nimble_proxy == nullptr) {
+    ESP_LOGW(TAG, "global_nimble_proxy is null in on_read_cb_");
+    return 0;
+  }
+
+  // arg contains the connection pointer
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Connection pointer is null in on_read_cb_");
+    return 0;
+  }
+
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
+    api_conn = global_nimble_proxy->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send read response");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    ESP_LOGE(TAG, "GATT read failed; conn_handle=%d status=%d", conn_handle, error->status);
+    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    return 0;
+  }
+
+  // Extract data from os_mbuf
+  if (attr != nullptr && attr->om != nullptr) {
+    // Get the data length
+    uint16_t data_len = OS_MBUF_PKTLEN(attr->om);
+
+    // Allocate temporary buffer for the data
+    uint8_t *data = new uint8_t[data_len];
+
+    // Copy data from mbuf chain
+    int rc = os_mbuf_copydata(attr->om, 0, data_len, data);
+    if (rc != 0) {
+      ESP_LOGE(TAG, "Failed to copy data from mbuf; rc=%d", rc);
+      delete[] data;
+      send_gatt_error(api_conn, conn->address, attr->handle, rc);
+      return 0;
+    }
+
+    ESP_LOGI(TAG, "GATT read success; conn_handle=%d handle=%d len=%d",
+             conn_handle, attr->handle, data_len);
+
+    // Send read response
+    send_gatt_read_response(api_conn, conn->address, attr->handle, data, data_len);
+
+    // Clean up
+    delete[] data;
+  } else {
+    ESP_LOGW(TAG, "Read completed but no data available");
+    send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+  }
+#endif
+
   return 0;
 }
 
 int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error *error,
                               struct ble_gatt_attr *attr, void *arg) {
-  // TODO: Implement in Phase 2.3
+#ifdef USE_API
+  if (global_nimble_proxy == nullptr) {
+    ESP_LOGW(TAG, "global_nimble_proxy is null in on_write_cb_");
+    return 0;
+  }
+
+  // arg contains the connection pointer
+  auto *conn = static_cast<NimBLEConnection *>(arg);
+  if (conn == nullptr) {
+    ESP_LOGW(TAG, "Connection pointer is null in on_write_cb_");
+    return 0;
+  }
+
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
+    api_conn = global_nimble_proxy->api_connection_;
+  }
+
+  if (api_conn == nullptr) {
+    ESP_LOGW(TAG, "No API connection to send write response");
+    return 0;
+  }
+
+  // Check for errors
+  if (error->status != 0) {
+    ESP_LOGE(TAG, "GATT write failed; conn_handle=%d status=%d", conn_handle, error->status);
+    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    return 0;
+  }
+
+  ESP_LOGI(TAG, "GATT write success; conn_handle=%d handle=%d",
+           conn_handle, attr ? attr->handle : 0);
+
+  // For writes, we send an empty read response to indicate success
+  // (ESPHome API uses BluetoothGATTReadResponse for write confirmations)
+  send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+#endif
+
   return 0;
 }
 
@@ -1263,33 +1362,260 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
   }
 }
 
-// Stub implementations for GATT operations (Phase 2.3+)
+// GATT operation implementations (Phase 2.3)
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
-  // TODO: Implement in Phase 2.3
-  ESP_LOGW(TAG, "bluetooth_gatt_read not yet implemented (address=%012llX, handle=%d)",
+  ESP_LOGI(TAG, "bluetooth_gatt_read: address=%012llX handle=%d",
            msg.address, msg.handle);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGE(TAG, "Connection not found for address=%012llX", msg.address);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOTCONN);
+    }
+#endif
+    return;
+  }
+
+  // Verify connection is ready for operations
+  if (conn->state != NimBLEConnectionState::READY &&
+      conn->state != NimBLEConnectionState::CONNECTED) {
+    ESP_LOGW(TAG, "Connection not ready for read; state=%d", (int)conn->state);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_EBUSY);
+    }
+#endif
+    return;
+  }
+
+  // Perform the GATT read
+  int rc = ble_gattc_read(conn->conn_handle, msg.handle,
+                          NimBLEProxy::on_read_cb_, conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gattc_read failed; rc=%d", rc);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, rc);
+    }
+#endif
+  }
 }
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
-  // TODO: Implement in Phase 2.3
-  ESP_LOGW(TAG, "bluetooth_gatt_write not yet implemented (address=%012llX, handle=%d)",
-           msg.address, msg.handle);
+  ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%d len=%d response=%d",
+           msg.address, msg.handle, msg.data_len_, msg.response);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGE(TAG, "Connection not found for address=%012llX", msg.address);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOTCONN);
+    }
+#endif
+    return;
+  }
+
+  // Verify connection is ready for operations
+  if (conn->state != NimBLEConnectionState::READY &&
+      conn->state != NimBLEConnectionState::CONNECTED) {
+    ESP_LOGW(TAG, "Connection not ready for write; state=%d", (int)conn->state);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_EBUSY);
+    }
+#endif
+    return;
+  }
+
+  int rc;
+
+  // Choose write method based on response flag
+  if (msg.response) {
+    // Write with response (ble_gattc_write_flat)
+    rc = ble_gattc_write_flat(conn->conn_handle, msg.handle,
+                              msg.data_ptr_, msg.data_len_,
+                              NimBLEProxy::on_write_cb_, conn);
+  } else {
+    // Write without response (ble_gattc_write_no_rsp_flat)
+    rc = ble_gattc_write_no_rsp_flat(conn->conn_handle, msg.handle,
+                                     msg.data_ptr_, msg.data_len_);
+
+    // For write without response, send immediate success
+    if (rc == 0) {
+#ifdef USE_API
+      void *api_conn = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+        api_conn = this->api_connection_;
+      }
+      if (api_conn != nullptr) {
+        send_gatt_read_response(api_conn, msg.address, msg.handle, nullptr, 0);
+      }
+#endif
+    }
+  }
+
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gattc_write failed; rc=%d", rc);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, rc);
+    }
+#endif
+  }
 }
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
-  // TODO: Implement in Phase 2.3
-  ESP_LOGW(TAG, "bluetooth_gatt_read_descriptor not yet implemented (address=%012llX, handle=%d)",
+  ESP_LOGI(TAG, "bluetooth_gatt_read_descriptor: address=%012llX handle=%d",
            msg.address, msg.handle);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGE(TAG, "Connection not found for address=%012llX", msg.address);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOTCONN);
+    }
+#endif
+    return;
+  }
+
+  // Verify connection is ready for operations
+  if (conn->state != NimBLEConnectionState::READY &&
+      conn->state != NimBLEConnectionState::CONNECTED) {
+    ESP_LOGW(TAG, "Connection not ready for descriptor read; state=%d", (int)conn->state);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_EBUSY);
+    }
+#endif
+    return;
+  }
+
+  // Perform the GATT descriptor read (uses same function as characteristic read)
+  int rc = ble_gattc_read(conn->conn_handle, msg.handle,
+                          NimBLEProxy::on_read_cb_, conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gattc_read (descriptor) failed; rc=%d", rc);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, rc);
+    }
+#endif
+  }
 }
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
-  // TODO: Implement in Phase 2.3
-  ESP_LOGW(TAG, "bluetooth_gatt_write_descriptor not yet implemented (address=%012llX, handle=%d)",
-           msg.address, msg.handle);
+  ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%d len=%d",
+           msg.address, msg.handle, msg.data_len_);
+
+  // Find the connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE) {
+    ESP_LOGE(TAG, "Connection not found for address=%012llX", msg.address);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_ENOTCONN);
+    }
+#endif
+    return;
+  }
+
+  // Verify connection is ready for operations
+  if (conn->state != NimBLEConnectionState::READY &&
+      conn->state != NimBLEConnectionState::CONNECTED) {
+    ESP_LOGW(TAG, "Connection not ready for descriptor write; state=%d", (int)conn->state);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, BLE_HS_EBUSY);
+    }
+#endif
+    return;
+  }
+
+  // Perform the GATT descriptor write (uses same function as characteristic write)
+  // Descriptors always use write with response
+  int rc = ble_gattc_write_flat(conn->conn_handle, msg.handle,
+                                msg.data_ptr_, msg.data_len_,
+                                NimBLEProxy::on_write_cb_, conn);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gattc_write_flat (descriptor) failed; rc=%d", rc);
+#ifdef USE_API
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      send_gatt_error(api_conn, msg.address, msg.handle, rc);
+    }
+#endif
+  }
 }
 
 template<typename T>
