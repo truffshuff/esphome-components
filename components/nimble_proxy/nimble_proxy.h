@@ -185,12 +185,11 @@ class NimBLEProxy : public Component {
   std::mutex api_connection_mutex_;
 
   // Advertisement batching for Home Assistant (opaque buffer to avoid header dependencies)
-  // Protected by mutex since accessed from both NimBLE host thread and ESPHome main thread
+  // NimBLE thread writes, main thread reads - use volatile for visibility
   void *adv_buffer_{nullptr};
-  uint16_t adv_buffer_count_{0};
+  volatile uint16_t adv_buffer_count_{0};
   uint32_t last_send_time_{0};
   bool adv_buffer_allocated_{false};
-  std::mutex adv_buffer_mutex_;
 
   // Connection tracking
   std::array<NimBLEConnection, BLUETOOTH_PROXY_MAX_CONNECTIONS> connections_;
