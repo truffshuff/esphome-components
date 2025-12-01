@@ -168,6 +168,7 @@ class NimBLEProxy : public Component {
 #endif
   void send_connections_free(void *conn) { }
   void bluetooth_scanner_set_mode(bool mode);
+  bool is_scanning() const { return this->scanning_; }
   uint32_t get_feature_flags();
   std::string get_bluetooth_mac_address_pretty();
 
