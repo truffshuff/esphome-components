@@ -400,39 +400,19 @@ void NimBLEProxy::setup_services_() {
 
 void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 #ifdef USE_API
-  // CRITICAL: Lock mutex for entire function to prevent race with loop()
-  std::lock_guard<std::mutex> lock(this->adv_buffer_mutex_);
+  // NO MUTEX - Simple volatile write from NimBLE thread, read from main thread
+  // This is safe because only one thread writes and one thread reads
 
   if (!this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
-    ESP_LOGW(TAG, "Advertisement buffer not allocated, skipping advertisement");
-    return;
-  }
-
-  // Thread-safe check for API connection
-  void *conn = nullptr;
-  {
-    std::lock_guard<std::mutex> api_lock(this->api_connection_mutex_);
-    conn = this->api_connection_;
-  }
-
-  // Periodically log statistics for debugging
-  static int adv_count = 0;
-  if (++adv_count % 100 == 0) {
-    ESP_LOGV(TAG, "Advertisement stats: count=%d, api_connection=%p", adv_count, conn);
-  }
-
-  if (conn == nullptr) {
-    ESP_LOGV(TAG, "No API connection, buffering advertisement (buffer has %d)", this->adv_buffer_count_);
+    return;  // Silent drop - not initialized yet
   }
 
   // Cast the opaque buffer to the correct type
   auto *buffer = static_cast<esphome::api::BluetoothLERawAdvertisement *>(this->adv_buffer_);
 
-  // Bounds check: if buffer is already full, we'll handle overflow after adding
-  // DO NOT call send_advertisements_() from NimBLE thread - API is not thread-safe!
+  // Check if buffer is full - if so, drop this advertisement
   if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE) {
-    ESP_LOGV(TAG, "Advertisement buffer full (%d), will drop oldest after adding new one",
-             this->adv_buffer_count_);
+    return;  // Drop silently - main thread will drain buffer soon
   }
 
   // Build 64-bit MAC address from 6-byte array
@@ -441,7 +421,7 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
     address |= ((uint64_t) disc->addr.val[i]) << (i * 8);
   }
 
-  // Add to buffer (now safe due to bounds check above)
+  // Add to buffer at current write position
   auto &adv = buffer[this->adv_buffer_count_];
   adv.address = address;
   adv.rssi = disc->rssi;
@@ -453,43 +433,26 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
     memcpy(adv.data, disc->data, adv.data_len);
   }
 
+  // Increment counter LAST - signals to main thread that new data is ready
   this->adv_buffer_count_++;
-
-  // CRITICAL: DO NOT send from NimBLE thread - ESPHome API is not thread-safe!
-  // Just buffer here, let loop() send on main thread
-  // If buffer is full, drop oldest advertisement (log warning)
-  if (this->adv_buffer_count_ > BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE) {
-    ESP_LOGW(TAG, "Advertisement buffer overflow - dropping oldest advertisement");
-    // Shift buffer left to drop oldest, keep newest
-    for (int i = 0; i < BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE - 1; i++) {
-      buffer[i] = buffer[i + 1];
-    }
-    this->adv_buffer_count_ = BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE;
-  }
 #else
-  // API not available, just log
   (void) disc;
 #endif
 }
 
 void NimBLEProxy::send_advertisements_() {
 #ifdef USE_API
-  // NOTE: This function assumes adv_buffer_mutex_ is ALREADY held by caller!
-  // It's called from add_advertisement_() and loop(), both with mutex locked.
+  // Called ONLY from main thread (loop()) - no mutex needed
 
   if (this->adv_buffer_count_ == 0 || !this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
     return;
   }
 
-  // Thread-safe access to api_connection_
-  void *conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-    conn = this->api_connection_;
+  // Get API connection (only accessed from main thread after initial setup)
+  void *conn = this->api_connection_;
+  if (conn == nullptr) {
+    return;  // No connection, keep buffering
   }
-
-  ESP_LOGV(TAG, "Attempting to send %d advertisements (api_connection=%p)",
-           this->adv_buffer_count_, conn);
 
   // Cast the opaque buffer to the correct type
   auto *buffer = static_cast<esphome::api::BluetoothLERawAdvertisement *>(this->adv_buffer_);
@@ -505,9 +468,7 @@ void NimBLEProxy::send_advertisements_() {
   // Send to the connected Home Assistant API client
   send_bluetooth_advertisements_to_client(conn, resp);
 
-  ESP_LOGV(TAG, "Sent %d advertisements to Home Assistant", this->adv_buffer_count_);
-
-  // Reset buffer
+  // Reset buffer - do this AFTER send completes
   this->adv_buffer_count_ = 0;
   this->last_send_time_ = millis();
 #endif
@@ -516,12 +477,11 @@ void NimBLEProxy::send_advertisements_() {
 void NimBLEProxy::loop() {
   // CRITICAL: ALL API sending must happen on main thread (this function)
   // ESPHome API is not thread-safe - NimBLE thread only buffers, never sends
-
-  std::lock_guard<std::mutex> lock(this->adv_buffer_mutex_);
+  // No mutex needed - volatile variable provides visibility
 
   if (this->adv_buffer_count_ > 0) {
     uint32_t now = millis();
-    // Send when buffer is full OR after 100ms timeout (reduced from 250ms since we only send here)
+    // Send when buffer is full OR after 100ms timeout
     if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE ||
         (now - this->last_send_time_) >= 100) {
       this->send_advertisements_();  // ONLY called from main thread - SAFE
