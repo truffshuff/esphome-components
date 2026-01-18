@@ -171,6 +171,9 @@ class NimBLEProxy : public Component {
   bool is_scanning() const { return this->scanning_; }
   uint32_t get_feature_flags();
   std::string get_bluetooth_mac_address_pretty();
+  // Backwards-compatible overload used by ESPHome API internals
+  // Fills a 18-byte buffer with a NUL-terminated MAC string ("AA:BB:CC:DD:EE:FF").
+  void get_bluetooth_mac_address_pretty(char out[18]);
 
  protected:
   bool active_{true};
