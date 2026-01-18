@@ -552,6 +552,16 @@ std::string NimBLEProxy::get_bluetooth_mac_address_pretty() {
   return std::string(mac_str);
 }
 
+// Backwards-compatible overload: fill provided buffer with NUL-terminated MAC string
+void NimBLEProxy::get_bluetooth_mac_address_pretty(char out[18]) {
+  std::string s = this->get_bluetooth_mac_address_pretty();
+  // Ensure buffer is NUL-terminated and sized for "AA:BB:CC:DD:EE:FF" + NUL
+  if (out == nullptr) return;
+  // Copy up to 17 characters and NUL-terminate
+  strncpy(out, s.c_str(), 17);
+  out[17] = '\0';
+}
+
 void NimBLEProxy::send_scanner_state_() {
 #ifdef USE_API
   void *conn = nullptr;
