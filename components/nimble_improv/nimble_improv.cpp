@@ -410,8 +410,8 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
       };
       push_lp(App.get_name());
       {
-        char build_time_buf[BUILD_TIME_STR_SIZE];
-        App.get_build_time_string(std::span<char, BUILD_TIME_STR_SIZE>(build_time_buf));
+        char build_time_buf[26];
+        App.get_build_time_string(std::span<char, 26>(build_time_buf));
         push_lp(std::string(build_time_buf)); // or your version string
       }
       push_lp("ESP32-S3");
@@ -650,8 +650,8 @@ int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
     } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
       // Firmware: Compilation date/time
       {
-        char build_time_buf[BUILD_TIME_STR_SIZE];
-        App.get_build_time_string(std::span<char, BUILD_TIME_STR_SIZE>(build_time_buf));
+        char build_time_buf[26];
+        App.get_build_time_string(std::span<char, 26>(build_time_buf));
         firmware_str = std::string(build_time_buf);
       }
       value = firmware_str.c_str();
