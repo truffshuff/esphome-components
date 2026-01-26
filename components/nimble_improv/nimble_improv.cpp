@@ -408,7 +408,7 @@ void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
         payload.insert(payload.end(), s.begin(), s.begin() + n);
       };
       push_lp(App.get_name());
-      push_lp(App.get_compilation_time()); // or your version string
+      push_lp(App.get_build_time_string()); // or your version string
       push_lp("ESP32-S3");
       push_lp(""); // URL sent after WiFi connects
       this->send_response_(payload);
@@ -644,7 +644,7 @@ int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
 
     } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
       // Firmware: Compilation date/time
-      firmware_str = App.get_compilation_time();
+      firmware_str = App.get_build_time_string();
       value = firmware_str.c_str();
 
     } else if (ble_uuid_cmp(uuid, &SOFTWARE_REVISION_UUID.u) == 0) {
