@@ -473,7 +473,13 @@ void NimBLEImprov::check_wifi_connection_() {
     // Send success response with redirect URL
     auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
     std::string redirect_url = "http://";
-    redirect_url += !ip_addresses.empty() ? ip_addresses[0].str() : "192.168.1.1";
+    if (!ip_addresses.empty()) {
+      char ip_buf[20] = {};
+      ip_addresses[0].str_to(ip_buf);
+      redirect_url += ip_buf;
+    } else {
+      redirect_url += "192.168.1.1";
+    }
     redirect_url += "/";
 
     std::vector<uint8_t> response;
