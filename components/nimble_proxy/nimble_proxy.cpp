@@ -596,6 +596,26 @@ void NimBLEProxy::send_scanner_state_() {
 #endif
 }
 
+void NimBLEProxy::send_connections_free(void *api_conn) {
+#ifdef USE_API
+  if (api_conn == nullptr) return;
+
+  // Count slots currently in IDLE state
+  uint8_t free_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(this->connections_mutex_);
+    for (const auto &c : this->connections_) {
+      if (c.state == NimBLEConnectionState::IDLE) {
+        free_count++;
+      }
+    }
+  }
+
+  send_bluetooth_connections_free(api_conn, free_count, this->connection_slots_);
+  ESP_LOGD(TAG, "Sent connections free: %d/%d", free_count, this->connection_slots_);
+#endif
+}
+
 void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
   if (conn == nullptr) {
     ESP_LOGW(TAG, "Attempted to subscribe null API connection");
@@ -619,6 +639,8 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
   if (this->initialized_) {
     this->send_scanner_state_();
   }
+  // Send current connection slot availability to the newly subscribed connection
+  this->send_connections_free(conn);
 }
 
 void NimBLEProxy::unsubscribe_api_connection(void *conn) {
@@ -649,6 +671,16 @@ void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnect
 
       // Start service discovery automatically
       this->start_service_discovery_(conn);
+
+      // Tell HA how many connection slots remain
+      {
+        void *api_conn = nullptr;
+        {
+          std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+          api_conn = this->api_connection_;
+        }
+        this->send_connections_free(api_conn);
+      }
     } else {
       ESP_LOGW(TAG, "Connection established but conn pointer is null");
     }
@@ -659,6 +691,14 @@ void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnect
     if (conn != nullptr) {
       this->send_connection_response_(conn, false, event->connect.status);
       this->reset_connection_(conn);
+
+      // Tell HA the freed slot is available again
+      void *api_conn = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+        api_conn = this->api_connection_;
+      }
+      this->send_connections_free(api_conn);
     }
 
     // Resume advertising if we were advertising
@@ -684,6 +724,14 @@ void NimBLEProxy::handle_gap_disconnect_(struct ble_gap_event *event, NimBLEConn
 
     // Reset the connection slot
     this->reset_connection_(conn);
+
+    // Tell HA the freed slot is available again
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    this->send_connections_free(api_conn);
   } else {
     ESP_LOGW(TAG, "Disconnect event for unknown connection handle %d",
              event->disconnect.conn.conn_handle);

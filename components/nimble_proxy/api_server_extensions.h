@@ -223,5 +223,25 @@ inline void send_gatt_notification(
   }
 }
 
+// Helper to send bluetooth connections free count to the connected API client
+// Called on initial HA subscription and whenever connection state changes.
+inline void send_bluetooth_connections_free(
+    void *api_connection,
+    uint32_t free_connections,
+    uint32_t total_connections) {
+
+  if (api_connection == nullptr) return;
+
+  auto *conn = static_cast<api::APIConnection *>(api_connection);
+
+  api::BluetoothConnectionsFreeResponse resp;
+  resp.free = free_connections;
+  resp.limit = total_connections;
+
+  if (!conn->send_message(resp, api::BluetoothConnectionsFreeResponse::MESSAGE_TYPE)) {
+    ESP_LOGW("nimble_proxy", "Failed to send connections free response");
+  }
+}
+
 }  // namespace nimble_proxy
 }  // namespace esphome
