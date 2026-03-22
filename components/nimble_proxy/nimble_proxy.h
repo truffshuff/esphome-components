@@ -166,7 +166,7 @@ class NimBLEProxy : public Component {
   template<typename T> void bluetooth_gatt_write_descriptor(const T &msg) { }
   template<typename T> void bluetooth_gatt_send_services(const T &msg) { }
   template<typename T> void bluetooth_gatt_notify(const T &msg) { }
-  void bluetooth_set_connection_params(const api::BluetoothSetConnectionParamsRequest &msg) { }
+  template<typename T> void bluetooth_set_connection_params(const T &msg) { }
 #endif
   void send_connections_free(void *api_conn);
   void bluetooth_scanner_set_mode(bool mode);

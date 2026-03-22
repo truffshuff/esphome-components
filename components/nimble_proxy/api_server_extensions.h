@@ -23,7 +23,7 @@ inline void send_bluetooth_advertisements_to_client(
   auto *conn = static_cast<api::APIConnection *>(api_connection);
 
   // Send the message using the API connection's send_message method
-  if (!conn->send_message(resp, api::BluetoothLERawAdvertisementsResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send BLE advertisements to API connection %p", api_connection);
   }
 }
@@ -45,7 +45,7 @@ inline void send_scanner_state_to_client(
   auto *conn = static_cast<api::APIConnection *>(api_connection);
 
   // Send the message using the API connection's send_message method
-  if (!conn->send_message(resp, api::BluetoothScannerStateResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send scanner state to API connection %p", api_connection);
   }
 }
@@ -76,7 +76,7 @@ inline void send_connection_response(
   resp.mtu = mtu;
   resp.error = error;
 
-  if (!conn->send_message(resp, api::BluetoothDeviceConnectionResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send connection response to API connection %p", api_connection);
   }
 }
@@ -114,7 +114,7 @@ inline void send_gatt_read_response(
     resp.data_len_ = 0;
   }
 
-  if (!conn->send_message(resp, api::BluetoothGATTReadResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT read response to API connection %p", api_connection);
   }
 }
@@ -143,7 +143,7 @@ inline void send_gatt_error(
   resp.handle = handle;
   resp.error = error;
 
-  if (!conn->send_message(resp, api::BluetoothGATTErrorResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT error to API connection %p", api_connection);
   }
 }
@@ -180,7 +180,7 @@ inline void send_gatt_services_done_response(
   api::BluetoothGATTGetServicesDoneResponse resp;
   resp.address = address;
 
-  if (!conn->send_message(resp, api::BluetoothGATTGetServicesDoneResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT services done response to API connection %p", api_connection);
   }
 }
@@ -218,7 +218,7 @@ inline void send_gatt_notification(
     resp.data_len_ = 0;
   }
 
-  if (!conn->send_message(resp, api::BluetoothGATTNotifyDataResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT notification to API connection %p", api_connection);
   }
 }
@@ -238,7 +238,7 @@ inline void send_bluetooth_connections_free(
   resp.free = free_connections;
   resp.limit = total_connections;
 
-  if (!conn->send_message(resp, api::BluetoothConnectionsFreeResponse::MESSAGE_TYPE)) {
+  if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send connections free response");
   }
 }
