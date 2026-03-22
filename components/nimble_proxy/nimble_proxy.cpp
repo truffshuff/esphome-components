@@ -1189,7 +1189,7 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
   }
 
   // Send the complete response
-  if (!api_connection->send_message(resp, api::BluetoothGATTGetServicesResponse::MESSAGE_TYPE)) {
+  if (!api_connection->send_message(resp)) {
     ESP_LOGW(TAG, "Failed to send GATT services response");
   }
 
@@ -1892,7 +1892,7 @@ void NimBLEProxy::send_pairing_response_(uint64_t address, bool paired, int erro
   resp.mtu = 23;  // Default MTU
   resp.error = error;
 
-  if (!connection->send_message(resp, esphome::api::BluetoothDeviceConnectionResponse::MESSAGE_TYPE)) {
+  if (!connection->send_message(resp)) {
     ESP_LOGW(TAG, "Failed to send pairing response");
   } else {
     ESP_LOGI(TAG, "Sent pairing response: address=%012llX paired=%d error=%d",
@@ -2465,7 +2465,7 @@ void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnect
       esphome::api::BluetoothSetConnectionParamsResponse resp;
       resp.address = msg.address;
       resp.error = BLE_HS_ENOTCONN;
-      connection->send_message(resp, esphome::api::BluetoothSetConnectionParamsResponse::MESSAGE_TYPE);
+      connection->send_message(resp);
     }
     return;
   }
@@ -2495,7 +2495,7 @@ void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnect
     esphome::api::BluetoothSetConnectionParamsResponse resp;
     resp.address = msg.address;
     resp.error = (rc == 0) ? 0 : rc;
-    connection->send_message(resp, esphome::api::BluetoothSetConnectionParamsResponse::MESSAGE_TYPE);
+    connection->send_message(resp);
   }
 
   if (rc != 0) {
