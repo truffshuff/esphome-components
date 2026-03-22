@@ -517,10 +517,12 @@ uint32_t NimBLEProxy::get_feature_flags() {
   const uint32_t FEATURE_CACHE_CLEARING = 1 << 4;
   const uint32_t FEATURE_RAW_ADVERTISEMENTS = 1 << 5;
   const uint32_t FEATURE_STATE_AND_MODE = 1 << 6;
+  const uint32_t FEATURE_CONNECTION_PARAMS_SETTING = 1 << 7;
 
-  // We support all features including pairing/bonding
+  // We support all features including pairing/bonding and connection params
   return FEATURE_PASSIVE_SCAN | FEATURE_ACTIVE_CONNECTIONS | FEATURE_REMOTE_CACHING |
-         FEATURE_PAIRING | FEATURE_CACHE_CLEARING | FEATURE_RAW_ADVERTISEMENTS | FEATURE_STATE_AND_MODE;
+         FEATURE_PAIRING | FEATURE_CACHE_CLEARING | FEATURE_RAW_ADVERTISEMENTS |
+         FEATURE_STATE_AND_MODE | FEATURE_CONNECTION_PARAMS_SETTING;
 }
 
 std::string NimBLEProxy::get_bluetooth_mac_address_pretty() {
@@ -2441,6 +2443,68 @@ template void NimBLEProxy::bluetooth_gatt_write_descriptor(const api::BluetoothG
 template void NimBLEProxy::bluetooth_gatt_send_services(const api::BluetoothGATTGetServicesRequest &msg);
 template void NimBLEProxy::bluetooth_gatt_notify(const api::BluetoothGATTNotifyRequest &msg);
 #endif
+
+void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnectionParamsRequest &msg) {
+#ifdef USE_API
+  ESP_LOGI(TAG, "bluetooth_set_connection_params: address=%012llX min=%d max=%d latency=%d timeout=%d",
+           msg.address, msg.min_interval, msg.max_interval, msg.latency, msg.timeout);
+
+  // Find existing connection
+  NimBLEConnection *conn = this->get_connection_(msg.address, false);
+  if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE ||
+      conn->conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+    ESP_LOGW(TAG, "bluetooth_set_connection_params: no active connection for address=%012llX", msg.address);
+    // Send error response
+    void *api_conn = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+      api_conn = this->api_connection_;
+    }
+    if (api_conn != nullptr) {
+      auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
+      esphome::api::BluetoothSetConnectionParamsResponse resp;
+      resp.address = msg.address;
+      resp.error = BLE_HS_ENOTCONN;
+      connection->send_message(resp, esphome::api::BluetoothSetConnectionParamsResponse::MESSAGE_TYPE);
+    }
+    return;
+  }
+
+  // Build NimBLE connection update params
+  // ESPHome intervals are in units of 1.25ms (BLE spec), same as NimBLE itvl fields.
+  // ESPHome timeout is in units of 10ms (BLE spec), same as NimBLE supervision_timeout.
+  struct ble_gap_upd_params params;
+  memset(&params, 0, sizeof(params));
+  params.itvl_min = (uint16_t) msg.min_interval;
+  params.itvl_max = (uint16_t) msg.max_interval;
+  params.latency  = (uint16_t) msg.latency;
+  params.supervision_timeout = (uint16_t) msg.timeout;
+  params.min_ce_len = 0;  // No preference
+  params.max_ce_len = 0;  // No preference
+
+  int rc = ble_gap_update_params(conn->conn_handle, &params);
+
+  // Send response
+  void *api_conn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
+    api_conn = this->api_connection_;
+  }
+  if (api_conn != nullptr) {
+    auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
+    esphome::api::BluetoothSetConnectionParamsResponse resp;
+    resp.address = msg.address;
+    resp.error = (rc == 0) ? 0 : rc;
+    connection->send_message(resp, esphome::api::BluetoothSetConnectionParamsResponse::MESSAGE_TYPE);
+  }
+
+  if (rc != 0) {
+    ESP_LOGW(TAG, "ble_gap_update_params failed; rc=%d", rc);
+  } else {
+    ESP_LOGI(TAG, "Connection params update initiated for address=%012llX", msg.address);
+  }
+#endif
+}
 
 }  // namespace nimble_proxy
 }  // namespace esphome
