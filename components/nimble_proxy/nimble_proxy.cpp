@@ -2434,18 +2434,8 @@ void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
            msg.enable ? "enabled" : "disabled", msg.handle, conn->subscribed_handles.size());
 }
 
-// Explicit template instantiations for all API message types
-template void NimBLEProxy::bluetooth_device_request(const api::BluetoothDeviceRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_read(const api::BluetoothGATTReadRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_write(const api::BluetoothGATTWriteRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_read_descriptor(const api::BluetoothGATTReadDescriptorRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_write_descriptor(const api::BluetoothGATTWriteDescriptorRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_send_services(const api::BluetoothGATTGetServicesRequest &msg);
-template void NimBLEProxy::bluetooth_gatt_notify(const api::BluetoothGATTNotifyRequest &msg);
-#endif
-
-void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnectionParamsRequest &msg) {
-#ifdef USE_API
+template<typename T>
+void NimBLEProxy::bluetooth_set_connection_params(const T &msg) {
   ESP_LOGI(TAG, "bluetooth_set_connection_params: address=%012llX min=%d max=%d latency=%d timeout=%d",
            msg.address, msg.min_interval, msg.max_interval, msg.latency, msg.timeout);
 
@@ -2454,7 +2444,6 @@ void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnect
   if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE ||
       conn->conn_handle == BLE_HS_CONN_HANDLE_NONE) {
     ESP_LOGW(TAG, "bluetooth_set_connection_params: no active connection for address=%012llX", msg.address);
-    // Send error response
     void *api_conn = nullptr;
     {
       std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
@@ -2470,21 +2459,17 @@ void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnect
     return;
   }
 
-  // Build NimBLE connection update params
-  // ESPHome intervals are in units of 1.25ms (BLE spec), same as NimBLE itvl fields.
-  // ESPHome timeout is in units of 10ms (BLE spec), same as NimBLE supervision_timeout.
   struct ble_gap_upd_params params;
   memset(&params, 0, sizeof(params));
   params.itvl_min = (uint16_t) msg.min_interval;
   params.itvl_max = (uint16_t) msg.max_interval;
   params.latency  = (uint16_t) msg.latency;
   params.supervision_timeout = (uint16_t) msg.timeout;
-  params.min_ce_len = 0;  // No preference
-  params.max_ce_len = 0;  // No preference
+  params.min_ce_len = 0;
+  params.max_ce_len = 0;
 
   int rc = ble_gap_update_params(conn->conn_handle, &params);
 
-  // Send response
   void *api_conn = nullptr;
   {
     std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
@@ -2503,8 +2488,18 @@ void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnect
   } else {
     ESP_LOGI(TAG, "Connection params update initiated for address=%012llX", msg.address);
   }
-#endif
 }
+
+// Explicit template instantiations for all API message types
+template void NimBLEProxy::bluetooth_device_request(const api::BluetoothDeviceRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_read(const api::BluetoothGATTReadRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_write(const api::BluetoothGATTWriteRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_read_descriptor(const api::BluetoothGATTReadDescriptorRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_write_descriptor(const api::BluetoothGATTWriteDescriptorRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_send_services(const api::BluetoothGATTGetServicesRequest &msg);
+template void NimBLEProxy::bluetooth_gatt_notify(const api::BluetoothGATTNotifyRequest &msg);
+template void NimBLEProxy::bluetooth_set_connection_params(const api::BluetoothSetConnectionParamsRequest &msg);
+#endif
 
 }  // namespace nimble_proxy
 }  // namespace esphome
