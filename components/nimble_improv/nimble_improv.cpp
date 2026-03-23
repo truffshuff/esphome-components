@@ -202,6 +202,10 @@ void NimBLEImprov::load_saved_credentials_() {
   }
 
   // Overwrite STA before WiFi starts so YAML entries don't take precedence
+  if (wifi::global_wifi_component == nullptr) {
+    ESP_LOGW(TAG, "WiFi component not available yet, skipping NVS credential load");
+    return;
+  }
   wifi::WiFiAP ap;
   ap.set_ssid(rec.ssid);
   ap.set_password(rec.password);

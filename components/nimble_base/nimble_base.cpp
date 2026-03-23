@@ -24,6 +24,7 @@
 #include "esphome/core/application.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_idf_version.h"
 #include "esp_mac.h"
 #include "nvs_flash.h"
 #include <cstring>
@@ -90,6 +91,13 @@ void NimBLEBase::setup() {
   // Release Classic BT memory (ignore error if already released)
   (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
+  // Configure host callbacks BEFORE nimble_port_init() to prevent a race
+  // condition: in ESP-IDF 5.5+, nimble_port_init() may start the NimBLE host
+  // task internally, which can call sync_cb before we set it.  Setting them
+  // here is safe on all IDF versions because ble_hs_init() never clears them.
+  ble_hs_cfg.sync_cb = NimBLEBase::on_sync_;
+  ble_hs_cfg.reset_cb = NimBLEBase::on_reset_;
+
   // Initialize NimBLE port (handles controller init internally)
   ESP_LOGV(TAG, "Calling nimble_port_init()...");
   esp_err_t ret = nimble_port_init();
@@ -97,10 +105,6 @@ void NimBLEBase::setup() {
     ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
     return;
   }
-
-  // Configure host callbacks
-  ble_hs_cfg.sync_cb = NimBLEBase::on_sync_;
-  ble_hs_cfg.reset_cb = NimBLEBase::on_reset_;
 
   // Initialize BLE store config before starting host task
   ESP_LOGV(TAG, "Initializing BLE store config...");
@@ -136,10 +140,16 @@ void NimBLEBase::setup() {
     }
   }
 
-  // Start NimBLE host task (only once)
+  // Start NimBLE host task (only once).
+  // In ESP-IDF >= 5.5.0, nimble_port_init() launches the host task internally;
+  // calling nimble_port_freertos_init() again would create a duplicate task.
   if (!this->host_task_started_) {
-    ESP_LOGV(TAG, "Starting NimBLE host task...");
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
+    ESP_LOGV(TAG, "Starting NimBLE host task via nimble_port_freertos_init...");
     nimble_port_freertos_init(NimBLEBase::host_task_);
+#else
+    ESP_LOGV(TAG, "NimBLE host task managed internally by nimble_port_init (ESP-IDF >= 5.5.0)");
+#endif
     this->host_task_started_ = true;
   }
 
