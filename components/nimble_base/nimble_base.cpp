@@ -39,35 +39,46 @@ static const char *const TAG = "nimble_base";
 // Static pointer for callbacks
 static NimBLEBase *global_nimble_base = nullptr;
 
-// Static storage for additional GATT services registered by other components
-static std::vector<const struct ble_gatt_svc_def *> additional_gatt_services;
-static std::vector<const ble_uuid128_t *> advertising_service_uuids;
-
-// Static storage for sync callbacks
-static std::vector<NimBLEBase::SyncCallback> sync_callbacks;
+// Construct-on-first-use accessors to avoid Static Initialization Order Fiasco.
+// NimBLEProxy and NimBLEImprov constructors run during static init and call
+// register_*() before translation-unit-level statics may be constructed.
+// Returning a local-static reference guarantees the object is initialized on
+// the first call, regardless of TU init order.
+static std::vector<const struct ble_gatt_svc_def *> &get_additional_gatt_services_() {
+  static std::vector<const struct ble_gatt_svc_def *> v;
+  return v;
+}
+static std::vector<const ble_uuid128_t *> &get_advertising_service_uuids_() {
+  static std::vector<const ble_uuid128_t *> v;
+  return v;
+}
+static std::vector<NimBLEBase::SyncCallback> &get_sync_callbacks_() {
+  static std::vector<NimBLEBase::SyncCallback> v;
+  return v;
+}
 
 // Static methods for external service registration
 void NimBLEBase::register_gatt_services(const struct ble_gatt_svc_def *services) {
-  additional_gatt_services.push_back(services);
-  ESP_LOGI(TAG, "Registered additional GATT services (%d total)", additional_gatt_services.size());
+  get_additional_gatt_services_().push_back(services);
+  ESP_LOGI(TAG, "Registered additional GATT services (%d total)", get_additional_gatt_services_().size());
 }
 
 std::vector<const struct ble_gatt_svc_def *> &NimBLEBase::get_additional_services() {
-  return additional_gatt_services;
+  return get_additional_gatt_services_();
 }
 
 void NimBLEBase::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
-  advertising_service_uuids.push_back(uuid);
-  ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", advertising_service_uuids.size());
+  get_advertising_service_uuids_().push_back(uuid);
+  ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", get_advertising_service_uuids_().size());
 }
 
 std::vector<const ble_uuid128_t *> &NimBLEBase::get_advertising_service_uuids() {
-  return advertising_service_uuids;
+  return get_advertising_service_uuids_();
 }
 
 void NimBLEBase::register_sync_callback(SyncCallback callback) {
-  sync_callbacks.push_back(callback);
-  ESP_LOGI(TAG, "Registered sync callback (%d total)", sync_callbacks.size());
+  get_sync_callbacks_().push_back(callback);
+  ESP_LOGI(TAG, "Registered sync callback (%d total)", get_sync_callbacks_().size());
 }
 
 void NimBLEBase::setup() {
@@ -122,6 +133,7 @@ void NimBLEBase::setup() {
   }
 
   // Register any additional GATT services (e.g., from nimble_improv)
+  auto &additional_gatt_services = get_additional_gatt_services_();
   if (!additional_gatt_services.empty()) {
     ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
     for (const auto *services : additional_gatt_services) {
@@ -164,7 +176,7 @@ void NimBLEBase::on_sync_() {
   }
 
   // Call all registered sync callbacks
-  for (auto callback : sync_callbacks) {
+  for (auto callback : get_sync_callbacks_()) {
     if (callback != nullptr) {
       callback();
     }
@@ -239,8 +251,8 @@ void NimBLEBase::dump_config() {
   ESP_LOGCONFIG(TAG, "NimBLE Base:");
   ESP_LOGCONFIG(TAG, "  Initialized: %s", YESNO(this->initialized_));
   ESP_LOGCONFIG(TAG, "  Host task started: %s", YESNO(this->host_task_started_));
-  ESP_LOGCONFIG(TAG, "  Registered GATT services: %d", additional_gatt_services.size());
-  ESP_LOGCONFIG(TAG, "  Registered advertising UUIDs: %d", advertising_service_uuids.size());
+  ESP_LOGCONFIG(TAG, "  Registered GATT services: %d", get_additional_gatt_services_().size());
+  ESP_LOGCONFIG(TAG, "  Registered advertising UUIDs: %d", get_advertising_service_uuids_().size());
   ESP_LOGCONFIG(TAG, "  BT controller status: %d", (int) esp_bt_controller_get_status());
 }
 
