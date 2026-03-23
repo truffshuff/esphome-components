@@ -74,13 +74,9 @@ void NimBLEProxy::setup() {
     return;
   }
 
-#ifdef USE_API
-  // Allocate advertisement buffer
-  if (!this->adv_buffer_allocated_) {
-    this->adv_buffer_ = new esphome::api::BluetoothLERawAdvertisement[BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE];
-    this->adv_buffer_allocated_ = true;
-  }
-#endif
+  // NOTE: adv_buffer_ is allocated lazily in add_advertisement_() so that
+  // api::BluetoothLERawAdvertisement's constructor runs after all API globals
+  // are ready (during BLE operation, not during early setup()).
 
   ESP_LOGI(TAG, "Setting up NimBLE Proxy...");
 
@@ -403,8 +399,14 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
   // NO MUTEX - Simple volatile write from NimBLE thread, read from main thread
   // This is safe because only one thread writes and one thread reads
 
+  // Lazy allocation: defer until NimBLE is actually running so that the
+  // api::BluetoothLERawAdvertisement constructor runs after API globals are ready.
+  if (!this->adv_buffer_allocated_) {
+    this->adv_buffer_ = new esphome::api::BluetoothLERawAdvertisement[BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE];
+    this->adv_buffer_allocated_ = (this->adv_buffer_ != nullptr);
+  }
   if (!this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
-    return;  // Silent drop - not initialized yet
+    return;  // Allocation failed or not yet ready
   }
 
   // Cast the opaque buffer to the correct type
