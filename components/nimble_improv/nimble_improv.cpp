@@ -162,6 +162,7 @@ void NimBLEImprov::setup() {
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
   ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
   this->set_state_(IMPROV_STATE_STOPPED);
+  ESP_LOGI(TAG, "[DIAG] NimBLEImprov::setup() DONE");
 }
 
 float NimBLEImprov::get_setup_priority() const {
