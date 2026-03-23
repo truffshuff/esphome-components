@@ -65,8 +65,9 @@ NimBLEProxy::NimBLEProxy() {
 }
 
 void NimBLEProxy::setup() {
-  ESP_LOGD(TAG, "NimBLEProxy::setup() called on instance %p", this);
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() ENTRY, this=%p", this);
   global_nimble_proxy = this;
+  ESP_LOGI(TAG, "[DIAG] global_nimble_proxy set");
   bluetooth_proxy::global_bluetooth_proxy = this;
 
   if (!this->active_) {
