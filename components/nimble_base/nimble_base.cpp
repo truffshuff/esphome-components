@@ -82,6 +82,7 @@ void NimBLEBase::register_sync_callback(SyncCallback callback) {
 }
 
 void NimBLEBase::setup() {
+  ESP_LOGI(TAG, "[DIAG] NimBLEBase::setup() ENTRY - proxy setup succeeded!");
   ESP_LOGI(TAG, "NimBLEBase::setup() called on instance %p", this);
   global_nimble_base = this;
 

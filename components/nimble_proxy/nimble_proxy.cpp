@@ -1,7 +1,6 @@
 #include "nimble_proxy.h"
 #include "esphome/components/nimble_base/nimble_base.h"
 #include "store/config/ble_store_config.h"
-#include "esp_rom_sys.h"  // for ets_printf
 
 // Undefine NimBLE macros that conflict with ESPHome API enums
 #ifdef LOG_LEVEL_NONE
@@ -71,32 +70,9 @@ NimBLEProxy::NimBLEProxy() {
 }
 
 void NimBLEProxy::setup() {
-  // Raw UART print — bypasses ESPHome logger to confirm we actually entered setup().
-  // If this prints but the ESP_LOGI below doesn't, the crash is inside ESP_LOGI args.
-  // If this never prints, the crash is in virtual-dispatch to setup() itself.
-  ets_printf("[nimble_proxy] PROXY_SETUP_ENTERED\n");
-  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() ENTRY, this=%p", this);
-  // global pointers already set in constructor; reassign here for safety
-  global_nimble_proxy = this;
-  ESP_LOGI(TAG, "[DIAG] global_nimble_proxy set");
-  bluetooth_proxy::global_bluetooth_proxy = this;
-
-  if (!this->active_) {
-    ESP_LOGI(TAG, "NimBLE Proxy is disabled");
-    return;
-  }
-
-  // NOTE: adv_buffer_ is allocated lazily in add_advertisement_() so that
-  // api::BluetoothLERawAdvertisement's constructor runs after all API globals
-  // are ready (during BLE operation, not during early setup()).
-
-  ESP_LOGI(TAG, "Setting up NimBLE Proxy...");
-
-  // NimBLE initialization is handled by nimble_base component
-  // The nimble_base component must be included in the YAML configuration
-  // and will run first due to setup priority (AFTER_BLUETOOTH)
-
-  ESP_LOGI(TAG, "NimBLE Proxy setup complete (initialization handled by nimble_base)");
+  // DIAG: completely empty body — all init moved to constructor.
+  // If NimBLEBase::setup() prints its sentinel, this empty body ran OK.
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - empty body");
 }
 
 void NimBLEProxy::on_sync_() {
