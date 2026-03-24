@@ -1,6 +1,8 @@
 #include "nimble_proxy.h"
 #include "esphome/components/nimble_base/nimble_base.h"
 #include "store/config/ble_store_config.h"
+#include "freertos/FreeRTOS.h"  // for vTaskDelay in setup() diagnostic
+#include "freertos/task.h"
 
 // Undefine NimBLE macros that conflict with ESPHome API enums
 #ifdef LOG_LEVEL_NONE
@@ -70,9 +72,13 @@ NimBLEProxy::NimBLEProxy() {
 }
 
 void NimBLEProxy::setup() {
-  // DIAG: completely empty body — all init moved to constructor.
-  // If NimBLEBase::setup() prints its sentinel, this empty body ran OK.
-  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - empty body");
+  // Delay to let USB CDC flush any pending log data before we proceed.
+  // If [DIAG] below still doesn't appear in the log, the crash is in
+  // virtual dispatch to setup() itself (corrupted object or vtable).
+  vTaskDelay(pdMS_TO_TICKS(200));
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - post-delay sentinel");
+  vTaskDelay(pdMS_TO_TICKS(200));
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - second sentinel");
 }
 
 void NimBLEProxy::on_sync_() {
@@ -1795,7 +1801,7 @@ void NimBLEProxy::dump_config() {
   ESP_LOGCONFIG(TAG, "  Initialized: %s", YESNO(this->initialized_));
   ESP_LOGCONFIG(TAG, "  Host task started: %s", YESNO(this->host_task_started_));
   ESP_LOGCONFIG(TAG, "  API Connection: %s", has_connection ? "connected" : "none");
-  ESP_LOGCONFIG(TAG, "  BT controller status: %d", (int) esp_bt_controller_get_status());
+  // NOTE: esp_bt_controller_get_status() omitted - may fault before BT init
 }
 
 //=============================================================================
