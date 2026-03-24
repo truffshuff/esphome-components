@@ -1,6 +1,7 @@
 #include "nimble_proxy.h"
 #include "esphome/components/nimble_base/nimble_base.h"
 #include "store/config/ble_store_config.h"
+#include "esp_rom_sys.h"  // for ets_printf
 
 // Undefine NimBLE macros that conflict with ESPHome API enums
 #ifdef LOG_LEVEL_NONE
@@ -60,12 +61,22 @@ namespace bluetooth_proxy {
 namespace nimble_proxy {
 
 NimBLEProxy::NimBLEProxy() {
+  // Set global pointers IMMEDIATELY in constructor (before App.setup() runs).
+  // ESPHome 2026.x may access bluetooth_proxy::global_bluetooth_proxy between
+  // component setups — setting here avoids a null-dereference crash.
+  global_nimble_proxy = this;
+  bluetooth_proxy::global_bluetooth_proxy = this;
   // Register sync callback with nimble_base so we get notified when BLE host is ready
   nimble_base::NimBLEBase::register_sync_callback(&NimBLEProxy::on_sync_);
 }
 
 void NimBLEProxy::setup() {
+  // Raw UART print — bypasses ESPHome logger to confirm we actually entered setup().
+  // If this prints but the ESP_LOGI below doesn't, the crash is inside ESP_LOGI args.
+  // If this never prints, the crash is in virtual-dispatch to setup() itself.
+  ets_printf("[nimble_proxy] PROXY_SETUP_ENTERED\n");
   ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() ENTRY, this=%p", this);
+  // global pointers already set in constructor; reassign here for safety
   global_nimble_proxy = this;
   ESP_LOGI(TAG, "[DIAG] global_nimble_proxy set");
   bluetooth_proxy::global_bluetooth_proxy = this;
