@@ -254,7 +254,7 @@ void NimBLEBase::dump_config() {
   ESP_LOGCONFIG(TAG, "  Host task started: %s", YESNO(this->host_task_started_));
   ESP_LOGCONFIG(TAG, "  Registered GATT services: %d", get_additional_gatt_services_().size());
   ESP_LOGCONFIG(TAG, "  Registered advertising UUIDs: %d", get_advertising_service_uuids_().size());
-  ESP_LOGCONFIG(TAG, "  BT controller status: %d", (int) esp_bt_controller_get_status());
+  // NOTE: esp_bt_controller_get_status() omitted - may fault before BT init
 }
 
 }  // namespace nimble_base
