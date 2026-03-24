@@ -74,7 +74,12 @@ async def to_code(config):
     cg.add_build_flag("-DBLUETOOTH_PROXY_MAX_CONNECTIONS=%d" % config[CONF_CONNECTION_SLOTS])
 
     var = cg.new_Pvariable(config[CONF_ID])
-    await cg.register_component(var, config)
+    # TEMPORARY STABILIZATION WORKAROUND:
+    # Do not register as a runtime Component while chasing an ESP-IDF 5.5 crash
+    # in App.setup() virtual dispatch for this object. Construction still occurs,
+    # so constructor-side callback registration and global pointer wiring remain.
+    # Re-enable register_component once root cause is resolved.
+    # await cg.register_component(var, config)
 
     cg.add(var.set_active(config[CONF_ACTIVE]))
     cg.add(var.set_connection_slots(config[CONF_CONNECTION_SLOTS]))
