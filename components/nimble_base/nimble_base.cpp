@@ -57,6 +57,11 @@ static std::vector<NimBLEBase::SyncCallback> &get_sync_callbacks_() {
   return v;
 }
 
+NimBLEBase::NimBLEBase() {
+  ESP_LOGI(TAG, "[DIAG] NimBLEBase::NimBLEBase() ENTRY");
+  ESP_LOGI(TAG, "[DIAG] NimBLEBase::NimBLEBase() DONE");
+}
+
 // Static methods for external service registration
 void NimBLEBase::register_gatt_services(const struct ble_gatt_svc_def *services) {
   get_additional_gatt_services_().push_back(services);
