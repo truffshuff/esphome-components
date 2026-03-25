@@ -62,6 +62,7 @@ namespace bluetooth_proxy {
 namespace nimble_proxy {
 
 NimBLEProxy::NimBLEProxy() {
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::NimBLEProxy() ENTRY");
   // Set global pointers IMMEDIATELY in constructor (before App.setup() runs).
   // ESPHome 2026.x may access bluetooth_proxy::global_bluetooth_proxy between
   // component setups — setting here avoids a null-dereference crash.
@@ -69,6 +70,7 @@ NimBLEProxy::NimBLEProxy() {
   bluetooth_proxy::global_bluetooth_proxy = this;
   // Register sync callback with nimble_base so we get notified when BLE host is ready
   nimble_base::NimBLEBase::register_sync_callback(&NimBLEProxy::on_sync_);
+  ESP_LOGI(TAG, "[DIAG] NimBLEProxy::NimBLEProxy() DONE");
 }
 
 void NimBLEProxy::setup() {
