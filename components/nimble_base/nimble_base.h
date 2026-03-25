@@ -30,6 +30,7 @@ namespace nimble_base {
  */
 class NimBLEBase : public Component {
  public:
+  NimBLEBase();
   void setup() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
