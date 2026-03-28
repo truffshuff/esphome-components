@@ -33,6 +33,7 @@
 #include "nvs_flash.h"
 #include <cstring>
 #include <algorithm>
+#include <cctype>
 
 #ifdef USE_API
 #include "esphome/components/api/api_server.h"
@@ -46,6 +47,75 @@ namespace esphome {
 namespace nimble_proxy {
 
 static const char *const TAG = "nimble_proxy";
+
+static bool looks_like_mac_suffix_(const std::string &value) {
+  if (value.length() != 6) {
+    return false;
+  }
+  for (char c : value) {
+    if (!isxdigit(static_cast<unsigned char>(c))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static std::string sanitize_base_name_(const std::string &value) {
+  std::string clean = value;
+  size_t last_dash = clean.rfind('-');
+  if (last_dash != std::string::npos) {
+    std::string suffix = clean.substr(last_dash + 1);
+    if (looks_like_mac_suffix_(suffix)) {
+      // Drop full 6-hex MAC-like suffix to avoid HA metadevice confusion.
+      clean = clean.substr(0, last_dash);
+    }
+  }
+  return clean;
+}
+
+static std::string compact_short_name_(const std::string &value) {
+  // Compact to <=8 chars and preserve uniqueness for names ending in -XXXXXX
+  // by keeping a 3-hex suffix fragment without exposing a full MAC pattern.
+  std::string base = sanitize_base_name_(value);
+  std::string source = value;
+  std::string suffix3;
+
+  size_t last_dash = source.rfind('-');
+  if (last_dash != std::string::npos) {
+    std::string maybe_suffix = source.substr(last_dash + 1);
+    if (looks_like_mac_suffix_(maybe_suffix)) {
+      suffix3 = maybe_suffix.substr(3, 3);
+      source = source.substr(0, last_dash);
+      base = sanitize_base_name_(source);
+    }
+  }
+
+  std::string compact;
+  compact.reserve(8);
+  for (char c : base) {
+    if (isalnum(static_cast<unsigned char>(c))) {
+      compact.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
+      if (compact.length() >= 8) {
+        break;
+      }
+    }
+  }
+
+  if (!suffix3.empty()) {
+    while (compact.length() > 5) {
+      compact.pop_back();
+    }
+    compact += suffix3;
+  }
+
+  if (compact.empty()) {
+    compact = "halo";
+  }
+  if (compact.length() > 8) {
+    compact.resize(8);
+  }
+  return compact;
+}
 
 // Static pointer for callbacks
 static NimBLEProxy *global_nimble_proxy = nullptr;
@@ -248,7 +318,9 @@ void NimBLEProxy::start_advertising_() {
   //            Home Assistant extracts MAC from both the advertisement packet (BLE MAC) and
   //            device name (WiFi MAC suffix), creating a mismatch that triggers metadevice bug
   static char device_name[32];
-  std::string name_base = App.get_name();
+  std::string configured_name = this->advertising_name_;
+  std::string app_name = App.get_name();
+  std::string name_base = configured_name.empty() ? app_name : configured_name;
 
   // If we have service UUIDs (like Improv), we need a shorter name to fit in 31 bytes
   // Calculation: Flags(3) + Name(2+N) + UUID128(18) = 23+N bytes
@@ -256,36 +328,12 @@ void NimBLEProxy::start_advertising_() {
   auto &advertising_uuids = nimble_base::NimBLEBase::get_advertising_service_uuids();
   static ble_uuid128_t uuid_storage[1];
   if (!advertising_uuids.empty()) {
-    // Use shortened base name without MAC suffix: "halo" becomes "h" (fits in 8 chars)
-    std::string short_name = name_base;
-    size_t dash_pos = short_name.find('-');
-    if (dash_pos != std::string::npos) {
-      short_name = short_name.substr(0, dash_pos);  // Keep only base part (e.g., "halo")
-    }
-    // Use just first character or short form (no MAC needed - BLE MAC is in advertisement)
-    snprintf(device_name, sizeof(device_name), "%c", short_name[0]);
+    std::string short_name = compact_short_name_(name_base);
+    snprintf(device_name, sizeof(device_name), "%s", short_name.c_str());
   } else {
     // No service UUIDs - use full base name without MAC suffix
-    // Extract base name before any MAC suffix (e.g., "halo-v1-79e384" -> "halo-v1")
-    std::string clean_name = name_base;
-    size_t last_dash = clean_name.rfind('-');
-    if (last_dash != std::string::npos) {
-      // Check if the part after last dash looks like a MAC (6 hex chars)
-      std::string potential_mac = clean_name.substr(last_dash + 1);
-      if (potential_mac.length() == 6) {
-        bool is_hex = true;
-        for (char c : potential_mac) {
-          if (!isxdigit(c)) {
-            is_hex = false;
-            break;
-          }
-        }
-        if (is_hex) {
-          // Remove the MAC suffix
-          clean_name = clean_name.substr(0, last_dash);
-        }
-      }
-    }
+    // Extract base name before any MAC suffix (e.g., "halo-v1-79e384" -> "halo-v1").
+    std::string clean_name = sanitize_base_name_(name_base);
     snprintf(device_name, sizeof(device_name), "%s", clean_name.c_str());
   }
 
