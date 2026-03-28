@@ -171,6 +171,7 @@ class NimBLEProxy : public Component {
   void send_connections_free(void *api_conn);
   void bluetooth_scanner_set_mode(bool mode);
   bool is_scanning() const { return this->scanning_; }
+  bool is_scanner_enabled() const { return this->scanner_enabled_; }
   uint32_t get_feature_flags();
   std::string get_bluetooth_mac_address_pretty();
   // Backwards-compatible overload used by ESPHome API internals
@@ -183,6 +184,7 @@ class NimBLEProxy : public Component {
   bool initialized_{false};
   bool host_task_started_{false};
   bool scanning_{false};
+  bool scanner_enabled_{true};
 
   // API connection tracking (void* to avoid including api headers)
   // We only support one active API connection at a time (like native bluetooth_proxy)
