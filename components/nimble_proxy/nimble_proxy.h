@@ -131,6 +131,7 @@ class NimBLEProxy : public Component {
   void set_scan_interval(uint16_t scan_interval) { this->scan_interval_ = scan_interval; }
   void set_scan_window(uint16_t scan_window) { this->scan_window_ = scan_window; }
   void set_scan_duplicate_filter(bool scan_duplicate_filter) { this->scan_duplicate_filter_ = scan_duplicate_filter; }
+  void set_advertising_name(const std::string &advertising_name) { this->advertising_name_ = advertising_name; }
 
   // Legacy method for backward compatibility
   void set_max_connections(uint8_t max_connections) { this->connection_slots_ = max_connections; }
@@ -193,6 +194,7 @@ class NimBLEProxy : public Component {
   uint16_t scan_interval_{2048};
   uint16_t scan_window_{256};
   bool scan_duplicate_filter_{true};
+  std::string advertising_name_{};
 
   // Diagnostics to correlate local discovery vs API forwarding.
   volatile uint32_t discovered_count_{0};
