@@ -160,7 +160,9 @@ void NimBLEProxy::start_scan_() {
   scan_params.filter_policy = BLE_HCI_SCAN_FILT_NO_WL;
   scan_params.limited = 0;  // General discovery
   scan_params.passive = 0;  // Active scanning
-  scan_params.filter_duplicates = 0;  // Report all advertisements
+    // Let NimBLE suppress repeated advertisements from the same source.
+    // This reduces API traffic and drop pressure when many nearby devices spam beacons.
+    scan_params.filter_duplicates = 1;
 
   ESP_LOGI(TAG, "Starting BLE scan...");
   int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &scan_params,
