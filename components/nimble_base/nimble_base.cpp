@@ -92,6 +92,7 @@ void NimBLEBase::setup() {
   global_nimble_base = this;
 
   ESP_LOGI(TAG, "Setting up NimBLE Base...");
+  this->setup_started_ms_ = millis();
 
   // Ensure NVS is initialized (required by Bluetooth stack)
   esp_err_t nvs_ret = nvs_flash_init();
@@ -165,13 +166,41 @@ void NimBLEBase::setup() {
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
     ESP_LOGV(TAG, "Starting NimBLE host task via nimble_port_freertos_init...");
     nimble_port_freertos_init(NimBLEBase::host_task_);
+    this->expects_internal_host_task_ = false;
+    this->host_task_started_ = true;
 #else
+    this->expects_internal_host_task_ = true;
     ESP_LOGV(TAG, "NimBLE host task managed internally by nimble_port_init (ESP-IDF >= 5.5.0)");
 #endif
-    this->host_task_started_ = true;
   }
 
   ESP_LOGI(TAG, "NimBLE Base setup complete");
+}
+
+void NimBLEBase::loop() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+  if (this->initialized_) {
+    return;
+  }
+
+  if (!this->expects_internal_host_task_) {
+    return;
+  }
+
+  if (this->fallback_host_task_started_) {
+    return;
+  }
+
+  // If sync never arrives after boot, try starting the host task manually once.
+  if ((millis() - this->setup_started_ms_) < 15000) {
+    return;
+  }
+
+  ESP_LOGW(TAG, "NimBLE sync timeout waiting for internal host task; starting manual host task fallback");
+  nimble_port_freertos_init(NimBLEBase::host_task_);
+  this->host_task_started_ = true;
+  this->fallback_host_task_started_ = true;
+#endif
 }
 
 void NimBLEBase::on_sync_() {

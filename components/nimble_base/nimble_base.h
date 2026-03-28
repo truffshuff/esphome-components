@@ -32,6 +32,7 @@ class NimBLEBase : public Component {
  public:
   NimBLEBase();
   void setup() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
 
@@ -59,6 +60,9 @@ class NimBLEBase : public Component {
  protected:
   bool initialized_{false};
   bool host_task_started_{false};
+  bool expects_internal_host_task_{false};
+  bool fallback_host_task_started_{false};
+  uint32_t setup_started_ms_{0};
 
   // NimBLE callbacks
   static void on_sync_();
