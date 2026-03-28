@@ -204,6 +204,8 @@ int NimBLEProxy::scan_callback_(struct ble_gap_event *event, void *arg) {
     return 0;
   }
 
+  global_nimble_proxy->discovered_count_++;
+
   struct ble_gap_disc_desc *disc = &event->disc;
 
   // Log discovered device
@@ -401,6 +403,7 @@ void NimBLEProxy::setup_services_() {
 void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 #ifdef USE_API
   if (!this->scanner_enabled_) {
+    this->dropped_scanner_disabled_count_++;
     return;
   }
 
@@ -422,6 +425,7 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 
   // Check if buffer is full - if so, drop this advertisement
   if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE) {
+    this->dropped_buffer_full_count_++;
     return;  // Drop silently - main thread will drain buffer soon
   }
 
@@ -461,6 +465,7 @@ void NimBLEProxy::send_advertisements_() {
   // Get API connection (only accessed from main thread after initial setup)
   void *conn = this->api_connection_;
   if (conn == nullptr) {
+    this->dropped_no_api_count_ += this->adv_buffer_count_;
     return;  // No connection, keep buffering
   }
 
@@ -477,6 +482,7 @@ void NimBLEProxy::send_advertisements_() {
 
   // Send to the connected Home Assistant API client
   send_bluetooth_advertisements_to_client(conn, resp);
+  this->forwarded_count_ += resp.advertisements_len;
 
   // Reset buffer - do this AFTER send completes
   this->adv_buffer_count_ = 0;
@@ -496,6 +502,17 @@ void NimBLEProxy::loop() {
         (now - this->last_send_time_) >= 100) {
       this->send_advertisements_();  // ONLY called from main thread - SAFE
     }
+  }
+
+  uint32_t now = millis();
+  if ((now - this->last_diag_log_ms_) >= 10000) {
+    bool has_api_conn = (this->api_connection_ != nullptr);
+    ESP_LOGI(TAG,
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u buffered=%u",
+             YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
+             this->discovered_count_, this->forwarded_count_, this->dropped_buffer_full_count_,
+             this->dropped_scanner_disabled_count_, this->dropped_no_api_count_, this->adv_buffer_count_);
+    this->last_diag_log_ms_ = now;
   }
 }
 
