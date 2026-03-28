@@ -148,30 +148,34 @@ NimBLEImprov::NimBLEImprov() {
   // Register Improv service UUID for advertising so clients can discover it
   ESP_LOGI(TAG, "Registering Improv service UUID for advertising");
   nimble_base::NimBLEBase::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
+
+  // Get an explicit host-sync signal instead of probing host state early.
+  nimble_base::NimBLEBase::register_sync_callback(&NimBLEImprov::on_nimble_sync_);
 }
 
 void NimBLEImprov::setup() {
-  // Prepare preference handle
-  this->pref_creds_ = global_preferences->make_preference<StoredWiFi>(PREF_ID_WIFI);
+  // Prepare preference handle only when preferences are ready.
+  if (global_preferences != nullptr) {
+    this->pref_creds_ = global_preferences->make_preference<StoredWiFi>(PREF_ID_WIFI);
 
-  // Always try to load saved credentials from NVS if they exist
-  // NVS credentials (from Improv provisioning) should override YAML credentials
-  // This runs before WiFi initializes (priority 150 vs 200) so we can set the STA
-  this->load_saved_credentials_();
+    // Always try to load saved credentials from NVS if they exist.
+    // NVS credentials (from Improv provisioning) should override YAML credentials.
+    this->load_saved_credentials_();
+  } else {
+    ESP_LOGW(TAG, "Preferences not available yet, skipping NVS credential load");
+  }
 
   ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
   ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
-  this->set_state_(IMPROV_STATE_STOPPED);
+  // Avoid notifications during setup; host may not be initialized yet.
+  this->state_ = IMPROV_STATE_STOPPED;
   ESP_LOGI(TAG, "[DIAG] NimBLEImprov::setup() DONE");
 }
 
 float NimBLEImprov::get_setup_priority() const {
-  // Run before WiFi initializes
-  // WiFi component runs at setup::SETUP_PRIORITY_WIFI (250.0f)
-  // We need to run BEFORE that, so use a LOWER number
-  // setup::SETUP_PRIORITY_DATA (600.0f) runs early for data components
-  // Use 600.0f to ensure we load NVS credentials before WiFi connects
-  return 600.0f;
+  // Run after nimble_base so host callbacks and core init are in place,
+  // but still before WiFi setup priority.
+  return setup_priority::AFTER_BLUETOOTH - 1.0f;
 }
 
 // Persist credentials to NVS
@@ -216,8 +220,8 @@ void NimBLEImprov::load_saved_credentials_() {
 }
 
 void NimBLEImprov::loop() {
-  // Get characteristic handles and start advertising once NimBLE is synced (one-time check)
-  if (!this->service_started_ && ble_hs_synced()) {
+  // Get characteristic handles after explicit host sync callback (one-time check).
+  if (!this->service_started_ && this->nimble_synced_) {
     ESP_LOGI(TAG, "NimBLE host synced, setting up Improv service");
 
     // Get characteristic value handles (services were registered by nimble_proxy during setup)
@@ -297,7 +301,7 @@ void NimBLEImprov::set_state_(ImprovState state) {
   if (this->state_ == state) return;
   this->state_ = state;
   ESP_LOGD(TAG, "State changed to: %d", state);
-  if (this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->status_handle_ != 0) {
+  if (this->nimble_synced_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->status_handle_ != 0) {
     uint8_t val = static_cast<uint8_t>(this->state_);
     struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
     if (om) {
@@ -315,7 +319,7 @@ void NimBLEImprov::set_error_(ImprovError error) {
   ESP_LOGD(TAG, "Error set to: %d", error);
 
   // Notify error characteristic if we have a connection and handle
-  if (this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->error_handle_ != 0) {
+  if (this->nimble_synced_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->error_handle_ != 0) {
     uint8_t val = static_cast<uint8_t>(this->error_);
     struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
     if (om != nullptr) {
@@ -715,6 +719,14 @@ void NimBLEImprov::send_response_(const std::vector<uint8_t> &payload) {
   } else {
     ESP_LOGD(TAG, "send_response_: notified %u bytes on RPC Result", (unsigned) payload.size());
   }
+}
+
+void NimBLEImprov::on_nimble_sync_() {
+  if (global_nimble_improv == nullptr) {
+    return;
+  }
+  global_nimble_improv->nimble_synced_ = true;
+  ESP_LOGI(TAG, "Received NimBLE sync callback");
 }
 
 }  // namespace nimble_improv

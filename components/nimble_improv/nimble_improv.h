@@ -118,6 +118,7 @@ class NimBLEImprov : public Component {
   // NimBLE callback handlers
   static int characteristic_access_callback(uint16_t conn_handle, uint16_t attr_handle,
                                            struct ble_gatt_access_ctxt *ctxt, void *arg);
+  static void on_nimble_sync_();
 
   // Accessors for callback functions (public so static callbacks can access)
   ImprovState get_state() const { return this->state_; }
@@ -150,11 +151,11 @@ class NimBLEImprov : public Component {
   
   // BLE handles
   uint16_t conn_handle_{BLE_HS_CONN_HANDLE_NONE};
-  uint16_t status_handle_;
-  uint16_t error_handle_;
-  uint16_t rpc_command_handle_;
-  uint16_t rpc_result_handle_;
-  uint16_t capabilities_handle_;
+  uint16_t status_handle_{0};
+  uint16_t error_handle_{0};
+  uint16_t rpc_command_handle_{0};
+  uint16_t rpc_result_handle_{0};
+  uint16_t capabilities_handle_{0};
   
   // WiFi provisioning state
   std::string incoming_ssid_;
@@ -163,6 +164,7 @@ class NimBLEImprov : public Component {
 
   // Service state
   bool service_started_{false};
+  bool nimble_synced_{false};
 
   // NVS preferences handle
   ESPPreferenceObject pref_creds_;
