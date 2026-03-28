@@ -14,6 +14,10 @@ NimBLEProxy = nimble_proxy_ns.class_("NimBLEProxy", cg.Component)
 CONF_ACTIVE = "active"
 CONF_CONNECTION_SLOTS = "connection_slots"  # Renamed from max_connections to match Bluedroid
 CONF_CACHE_SERVICES = "cache_services"      # Placeholder for future GATT caching support
+CONF_SCAN_ACTIVE = "scan_active"
+CONF_SCAN_INTERVAL = "scan_interval"
+CONF_SCAN_WINDOW = "scan_window"
+CONF_SCAN_DUPLICATE_FILTER = "scan_duplicate_filter"
 
 # Legacy parameter support for backward compatibility
 CONF_MAX_CONNECTIONS = "max_connections"
@@ -37,6 +41,19 @@ CONFIG_SCHEMA = cv.Schema(
 
         # Placeholder for future GATT service caching (accepted but not yet implemented)
         cv.Optional(CONF_CACHE_SERVICES, default=True): cv.boolean,
+
+        # Scanner tuning for noisy RF environments.
+        # Values are in BLE units of 0.625ms (same as NimBLE/IDF APIs).
+        cv.Optional(CONF_SCAN_ACTIVE, default=False): cv.boolean,
+        cv.Optional(CONF_SCAN_INTERVAL, default=2048): cv.All(
+            cv.positive_int,
+            cv.Range(min=16, max=65535)
+        ),
+        cv.Optional(CONF_SCAN_WINDOW, default=256): cv.All(
+            cv.positive_int,
+            cv.Range(min=16, max=65535)
+        ),
+        cv.Optional(CONF_SCAN_DUPLICATE_FILTER, default=True): cv.boolean,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -60,6 +77,11 @@ def _validate_config(config):
     if CONF_CONNECTION_SLOTS not in config:
         config[CONF_CONNECTION_SLOTS] = 3
 
+    if config[CONF_SCAN_WINDOW] > config[CONF_SCAN_INTERVAL]:
+        raise cv.Invalid(
+            f"'{CONF_SCAN_WINDOW}' must be <= '{CONF_SCAN_INTERVAL}'"
+        )
+
     return config
 
 
@@ -80,6 +102,10 @@ async def to_code(config):
 
     cg.add(var.set_active(config[CONF_ACTIVE]))
     cg.add(var.set_connection_slots(config[CONF_CONNECTION_SLOTS]))
+    cg.add(var.set_scan_active(config[CONF_SCAN_ACTIVE]))
+    cg.add(var.set_scan_interval(config[CONF_SCAN_INTERVAL]))
+    cg.add(var.set_scan_window(config[CONF_SCAN_WINDOW]))
+    cg.add(var.set_scan_duplicate_filter(config[CONF_SCAN_DUPLICATE_FILTER]))
 
     # Note: cache_services parameter is accepted for API compatibility with Bluedroid bluetooth_proxy
     # but is not yet functional. Active GATT connections required before service caching can be implemented.

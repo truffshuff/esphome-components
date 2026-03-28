@@ -153,15 +153,20 @@ void NimBLEProxy::start_scan_() {
   memset(&scan_params, 0, sizeof(scan_params));
 
   // Configure scan parameters.
-  // Use a lighter duty cycle to reduce flood/drops in dense RF environments.
-  scan_params.itvl = 2048;   // 1280ms interval (N * 0.625ms)
-  scan_params.window = 256;  // 160ms window (12.5% duty cycle)
+  // Values are tunable from YAML to balance discovery quality vs API load.
+  scan_params.itvl = this->scan_interval_;
+  scan_params.window = this->scan_window_;
   scan_params.filter_policy = BLE_HCI_SCAN_FILT_NO_WL;
   scan_params.limited = 0;  // General discovery
-  scan_params.passive = 1;  // Passive scanning
-    // Let NimBLE suppress repeated advertisements from the same source.
-    // This reduces API traffic and drop pressure when many nearby devices spam beacons.
-    scan_params.filter_duplicates = 1;
+  scan_params.passive = this->scan_active_ ? 0 : 1;
+  // Let NimBLE suppress repeated advertisements from the same source.
+  // This reduces API traffic and drop pressure when many nearby devices spam beacons.
+  scan_params.filter_duplicates = this->scan_duplicate_filter_ ? 1 : 0;
+
+  ESP_LOGI(TAG,
+           "Scan config: mode=%s interval=%u window=%u duplicate_filter=%s",
+           this->scan_active_ ? "active" : "passive", this->scan_interval_,
+           this->scan_window_, YESNO(this->scan_duplicate_filter_));
 
   ESP_LOGI(TAG, "Starting BLE scan...");
   int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &scan_params,

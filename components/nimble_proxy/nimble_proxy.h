@@ -127,6 +127,10 @@ class NimBLEProxy : public Component {
 
   void set_active(bool active) { this->active_ = active; }
   void set_connection_slots(uint8_t connection_slots) { this->connection_slots_ = connection_slots; }
+  void set_scan_active(bool scan_active) { this->scan_active_ = scan_active; }
+  void set_scan_interval(uint16_t scan_interval) { this->scan_interval_ = scan_interval; }
+  void set_scan_window(uint16_t scan_window) { this->scan_window_ = scan_window; }
+  void set_scan_duplicate_filter(bool scan_duplicate_filter) { this->scan_duplicate_filter_ = scan_duplicate_filter; }
 
   // Legacy method for backward compatibility
   void set_max_connections(uint8_t max_connections) { this->connection_slots_ = max_connections; }
@@ -185,6 +189,10 @@ class NimBLEProxy : public Component {
   bool host_task_started_{false};
   bool scanning_{false};
   bool scanner_enabled_{true};
+  bool scan_active_{false};
+  uint16_t scan_interval_{2048};
+  uint16_t scan_window_{256};
+  bool scan_duplicate_filter_{true};
 
   // Diagnostics to correlate local discovery vs API forwarding.
   volatile uint32_t discovered_count_{0};
