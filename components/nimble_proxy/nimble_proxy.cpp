@@ -123,9 +123,13 @@ void NimBLEProxy::on_sync_() {
     global_nimble_proxy->start_advertising_();
   }
 
-  // Always start scanning for BLE proxy functionality
-  ESP_LOGI(TAG, "Starting BLE scan");
-  global_nimble_proxy->start_scan_();
+  if (global_nimble_proxy->scanner_enabled_) {
+    ESP_LOGI(TAG, "Starting BLE scan");
+    global_nimble_proxy->start_scan_();
+  } else {
+    ESP_LOGI(TAG, "Scanner is disabled; skipping BLE scan start");
+    global_nimble_proxy->send_scanner_state_();
+  }
 }
 
 void NimBLEProxy::on_reset_(int reason) {
@@ -193,6 +197,10 @@ void NimBLEProxy::stop_scan_() {
 
 int NimBLEProxy::scan_callback_(struct ble_gap_event *event, void *arg) {
   if (event->type != BLE_GAP_EVENT_DISC) {
+    return 0;
+  }
+
+  if (global_nimble_proxy == nullptr || !global_nimble_proxy->scanner_enabled_) {
     return 0;
   }
 
@@ -392,6 +400,10 @@ void NimBLEProxy::setup_services_() {
 
 void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 #ifdef USE_API
+  if (!this->scanner_enabled_) {
+    return;
+  }
+
   // NO MUTEX - Simple volatile write from NimBLE thread, read from main thread
   // This is safe because only one thread writes and one thread reads
 
@@ -490,18 +502,26 @@ void NimBLEProxy::loop() {
 void NimBLEProxy::bluetooth_scanner_set_mode(bool mode) {
   // mode: true = scanning enabled, false = scanning disabled
   ESP_LOGI(TAG, "Home Assistant requested scanner mode: %s", mode ? "enabled" : "disabled");
+  this->scanner_enabled_ = mode;
 
   if (mode) {
     // Start scanning if not already scanning
     if (!this->scanning_ && this->initialized_) {
       this->start_scan_();
       // start_scan_() will call send_scanner_state_()
+    } else {
+      this->send_scanner_state_();
     }
   } else {
+    // Drop any buffered advertisements immediately when scanner is disabled.
+    this->adv_buffer_count_ = 0;
+
     // Stop scanning if currently scanning
     if (this->scanning_) {
       this->stop_scan_();
       // stop_scan_() will call send_scanner_state_()
+    } else {
+      this->send_scanner_state_();
     }
   }
 }

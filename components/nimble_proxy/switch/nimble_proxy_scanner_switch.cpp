@@ -7,11 +7,17 @@ namespace nimble_proxy {
 static const char *const TAG = "nimble_proxy.switch";
 
 void NimBLEProxyScannerSwitch::setup() {
-  // Restore initial state from parent
-  if (this->parent_ != nullptr) {
-    bool initial_state = this->parent_->is_scanning();
-    this->publish_state(initial_state);
+  if (this->parent_ == nullptr) {
+    return;
   }
+
+  auto restored = this->get_initial_state_with_restore_mode();
+  if (restored.has_value()) {
+    this->write_state(*restored);
+    return;
+  }
+
+  this->publish_state(this->parent_->is_scanner_enabled());
 }
 
 void NimBLEProxyScannerSwitch::dump_config() {
@@ -29,8 +35,8 @@ void NimBLEProxyScannerSwitch::write_state(bool state) {
   // Use the parent's bluetooth_scanner_set_mode method
   this->parent_->bluetooth_scanner_set_mode(state);
 
-  // Publish the new state
-  this->publish_state(state);
+  // Publish effective desired scanner mode.
+  this->publish_state(this->parent_->is_scanner_enabled());
 }
 
 }  // namespace nimble_proxy
