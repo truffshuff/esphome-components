@@ -152,14 +152,13 @@ void NimBLEProxy::start_scan_() {
   struct ble_gap_disc_params scan_params;
   memset(&scan_params, 0, sizeof(scan_params));
 
-  // Configure scan parameters
-  // Reduced from 512/48 (320ms/30ms) to 2048/512 (1280ms/320ms)
-  // This gives BLE a 25% duty cycle instead of 9%, reducing TCP traffic by ~72%
-  scan_params.itvl = 2048;  // 1280ms interval (N * 0.625ms)
-  scan_params.window = 512;  // 320ms window
+  // Configure scan parameters.
+  // Use a lighter duty cycle to reduce flood/drops in dense RF environments.
+  scan_params.itvl = 2048;   // 1280ms interval (N * 0.625ms)
+  scan_params.window = 256;  // 160ms window (12.5% duty cycle)
   scan_params.filter_policy = BLE_HCI_SCAN_FILT_NO_WL;
   scan_params.limited = 0;  // General discovery
-  scan_params.passive = 0;  // Active scanning
+  scan_params.passive = 1;  // Passive scanning
     // Let NimBLE suppress repeated advertisements from the same source.
     // This reduces API traffic and drop pressure when many nearby devices spam beacons.
     scan_params.filter_duplicates = 1;
