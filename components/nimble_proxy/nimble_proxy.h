@@ -186,6 +186,14 @@ class NimBLEProxy : public Component {
   bool scanning_{false};
   bool scanner_enabled_{true};
 
+  // Diagnostics to correlate local discovery vs API forwarding.
+  volatile uint32_t discovered_count_{0};
+  uint32_t forwarded_count_{0};
+  uint32_t dropped_buffer_full_count_{0};
+  uint32_t dropped_scanner_disabled_count_{0};
+  uint32_t dropped_no_api_count_{0};
+  uint32_t last_diag_log_ms_{0};
+
   // API connection tracking (void* to avoid including api headers)
   // We only support one active API connection at a time (like native bluetooth_proxy)
   // Protected by mutex since it's accessed from NimBLE host thread and ESPHome main thread
