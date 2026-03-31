@@ -18,6 +18,7 @@ CONF_SCAN_ACTIVE = "scan_active"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_SCAN_WINDOW = "scan_window"
 CONF_SCAN_DUPLICATE_FILTER = "scan_duplicate_filter"
+CONF_SCAN_DUPLICATE_CACHE_SIZE = "scan_duplicate_cache_size"
 CONF_ADVERTISING_NAME = "advertising_name"
 
 # Legacy parameter support for backward compatibility
@@ -55,6 +56,12 @@ CONFIG_SCHEMA = cv.Schema(
             cv.Range(min=16, max=65535)
         ),
         cv.Optional(CONF_SCAN_DUPLICATE_FILTER, default=True): cv.boolean,
+        # Software-level duplicate suppression cache size.
+        # 0 disables software duplicate filtering.
+        cv.Optional(CONF_SCAN_DUPLICATE_CACHE_SIZE, default=0): cv.All(
+            cv.int_,
+            cv.Range(min=0, max=4096)
+        ),
         cv.Optional(CONF_ADVERTISING_NAME, default=""): cv.string_strict,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -108,6 +115,7 @@ async def to_code(config):
     cg.add(var.set_scan_interval(config[CONF_SCAN_INTERVAL]))
     cg.add(var.set_scan_window(config[CONF_SCAN_WINDOW]))
     cg.add(var.set_scan_duplicate_filter(config[CONF_SCAN_DUPLICATE_FILTER]))
+    cg.add(var.set_scan_duplicate_cache_size(config[CONF_SCAN_DUPLICATE_CACHE_SIZE]))
     cg.add(var.set_advertising_name(config[CONF_ADVERTISING_NAME]))
 
     # Note: cache_services parameter is accepted for API compatibility with Bluedroid bluetooth_proxy

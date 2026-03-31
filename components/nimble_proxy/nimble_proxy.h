@@ -131,6 +131,9 @@ class NimBLEProxy : public Component {
   void set_scan_interval(uint16_t scan_interval) { this->scan_interval_ = scan_interval; }
   void set_scan_window(uint16_t scan_window) { this->scan_window_ = scan_window; }
   void set_scan_duplicate_filter(bool scan_duplicate_filter) { this->scan_duplicate_filter_ = scan_duplicate_filter; }
+  void set_scan_duplicate_cache_size(uint16_t scan_duplicate_cache_size) {
+    this->scan_duplicate_cache_size_ = scan_duplicate_cache_size;
+  }
   void set_advertising_name(const std::string &advertising_name) { this->advertising_name_ = advertising_name; }
 
   // Legacy method for backward compatibility
@@ -194,6 +197,7 @@ class NimBLEProxy : public Component {
   uint16_t scan_interval_{2048};
   uint16_t scan_window_{256};
   bool scan_duplicate_filter_{true};
+  uint16_t scan_duplicate_cache_size_{0};
   std::string advertising_name_{};
 
   // Diagnostics to correlate local discovery vs API forwarding.
@@ -202,7 +206,14 @@ class NimBLEProxy : public Component {
   uint32_t dropped_buffer_full_count_{0};
   uint32_t dropped_scanner_disabled_count_{0};
   uint32_t dropped_no_api_count_{0};
+  volatile uint32_t duplicate_seen_count_{0};
+  volatile uint32_t duplicate_dropped_count_{0};
   uint32_t last_diag_log_ms_{0};
+
+  // Fixed-size ring of recent advertisement signatures used for optional
+  // software duplicate suppression.
+  std::vector<uint32_t> recent_adv_signatures_;
+  uint16_t recent_adv_signature_index_{0};
 
   // API connection tracking (void* to avoid including api headers)
   // We only support one active API connection at a time (like native bluetooth_proxy)
