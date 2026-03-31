@@ -117,6 +117,29 @@ static std::string compact_short_name_(const std::string &value) {
   return compact;
 }
 
+static uint32_t advertisement_signature_(const ble_gap_disc_desc *disc) {
+  // FNV-1a hash over source address metadata and raw payload bytes.
+  uint32_t hash = 2166136261u;
+  auto hash_byte = [&hash](uint8_t b) {
+    hash ^= b;
+    hash *= 16777619u;
+  };
+
+  hash_byte(static_cast<uint8_t>(disc->addr.type));
+  for (size_t i = 0; i < sizeof(disc->addr.val); i++) {
+    hash_byte(disc->addr.val[i]);
+  }
+  hash_byte(static_cast<uint8_t>(disc->length_data & 0xFF));
+  hash_byte(static_cast<uint8_t>((disc->length_data >> 8) & 0xFF));
+  if (disc->length_data > 0 && disc->data != nullptr) {
+    for (size_t i = 0; i < disc->length_data; i++) {
+      hash_byte(disc->data[i]);
+    }
+  }
+
+  return hash;
+}
+
 // Static pointer for callbacks
 static NimBLEProxy *global_nimble_proxy = nullptr;
 
@@ -234,9 +257,9 @@ void NimBLEProxy::start_scan_() {
   scan_params.filter_duplicates = this->scan_duplicate_filter_ ? 1 : 0;
 
   ESP_LOGI(TAG,
-           "Scan config: mode=%s interval=%u window=%u duplicate_filter=%s",
+           "Scan config: mode=%s interval=%u window=%u duplicate_filter=%s duplicate_cache=%u",
            this->scan_active_ ? "active" : "passive", this->scan_interval_,
-           this->scan_window_, YESNO(this->scan_duplicate_filter_));
+           this->scan_window_, YESNO(this->scan_duplicate_filter_), this->scan_duplicate_cache_size_);
 
   ESP_LOGI(TAG, "Starting BLE scan...");
   int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &scan_params,
@@ -461,6 +484,32 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
     return;
   }
 
+  if (this->scan_duplicate_cache_size_ > 0) {
+    uint32_t signature = advertisement_signature_(disc);
+    bool is_duplicate = false;
+
+    for (uint32_t seen_signature : this->recent_adv_signatures_) {
+      if (seen_signature == signature) {
+        is_duplicate = true;
+        break;
+      }
+    }
+
+    if (is_duplicate) {
+      this->duplicate_seen_count_++;
+      this->duplicate_dropped_count_++;
+      return;
+    }
+
+    if (this->recent_adv_signatures_.size() < this->scan_duplicate_cache_size_) {
+      this->recent_adv_signatures_.push_back(signature);
+    } else {
+      this->recent_adv_signatures_[this->recent_adv_signature_index_] = signature;
+      this->recent_adv_signature_index_ =
+          (this->recent_adv_signature_index_ + 1) % this->scan_duplicate_cache_size_;
+    }
+  }
+
   // NO MUTEX - Simple volatile write from NimBLE thread, read from main thread
   // This is safe because only one thread writes and one thread reads
 
@@ -562,10 +611,12 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u buffered=%u",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u buffered=%u",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
              this->discovered_count_, this->forwarded_count_, this->dropped_buffer_full_count_,
-             this->dropped_scanner_disabled_count_, this->dropped_no_api_count_, this->adv_buffer_count_);
+             this->dropped_scanner_disabled_count_, this->dropped_no_api_count_,
+             this->duplicate_seen_count_, this->duplicate_dropped_count_,
+             this->scan_duplicate_cache_size_, this->adv_buffer_count_);
     this->last_diag_log_ms_ = now;
   }
 }
