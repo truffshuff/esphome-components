@@ -134,6 +134,9 @@ class NimBLEProxy : public Component {
   void set_scan_duplicate_cache_size(uint16_t scan_duplicate_cache_size) {
     this->scan_duplicate_cache_size_ = scan_duplicate_cache_size;
   }
+  void set_advertisement_send_interval_ms(uint16_t advertisement_send_interval_ms) {
+    this->advertisement_send_interval_ms_ = advertisement_send_interval_ms;
+  }
   void set_advertising_name(const std::string &advertising_name) { this->advertising_name_ = advertising_name; }
 
   // Legacy method for backward compatibility
@@ -198,6 +201,7 @@ class NimBLEProxy : public Component {
   uint16_t scan_window_{256};
   bool scan_duplicate_filter_{true};
   uint16_t scan_duplicate_cache_size_{0};
+  uint16_t advertisement_send_interval_ms_{100};
   std::string advertising_name_{};
 
   // Diagnostics to correlate local discovery vs API forwarding.
