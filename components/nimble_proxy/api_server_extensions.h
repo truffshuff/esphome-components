@@ -7,14 +7,16 @@
 namespace esphome {
 namespace nimble_proxy {
 
-// Helper to send bluetooth advertisements to the connected API client
-inline void send_bluetooth_advertisements_to_client(
+// Helper to send bluetooth advertisements to the connected API client.
+// Returns true if the message was accepted by the API output buffer, false if
+// the send failed (e.g. API output buffer full / connection congested).
+inline bool send_bluetooth_advertisements_to_client(
     void *api_connection,
     api::BluetoothLERawAdvertisementsResponse &resp) {
 
   if (api_connection == nullptr) {
     ESP_LOGV("nimble_proxy", "No API connection to send %d advertisements to", resp.advertisements_len);
-    return;
+    return false;
   }
 
   ESP_LOGD("nimble_proxy", "Sending %d BLE advertisements to API client", resp.advertisements_len);
@@ -22,10 +24,11 @@ inline void send_bluetooth_advertisements_to_client(
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
 
-  // Send the message using the API connection's send_message method
   if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send BLE advertisements to API connection %p", api_connection);
+    return false;
   }
+  return true;
 }
 
 // Helper to send scanner state to the connected API client
