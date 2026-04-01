@@ -611,12 +611,13 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u buffered=%u",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
              this->discovered_count_, this->forwarded_count_, this->dropped_buffer_full_count_,
              this->dropped_scanner_disabled_count_, this->dropped_no_api_count_,
              this->duplicate_seen_count_, this->duplicate_dropped_count_,
              this->scan_duplicate_cache_size_, this->advertisement_send_interval_ms_,
+             BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE,
              this->adv_buffer_count_);
     this->last_diag_log_ms_ = now;
   }
