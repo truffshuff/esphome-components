@@ -779,6 +779,18 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
 
   ESP_LOGI(TAG, "API connection %p subscribed (flags=0x%x)", conn, flags);
 
+  // Clear any stale buffered payloads captured before API subscription.
+  this->adv_buffer_count_ = 0;
+
+  // Restart scanning to ensure HA receives a fresh stream immediately after
+  // subscribing, even if the scanner had been running before API connected.
+  if (this->initialized_ && this->scanner_enabled_) {
+    if (this->scanning_) {
+      this->stop_scan_();
+    }
+    this->start_scan_();
+  }
+
   // Send current scanner state to the newly subscribed connection
   if (this->initialized_) {
     this->send_scanner_state_();
