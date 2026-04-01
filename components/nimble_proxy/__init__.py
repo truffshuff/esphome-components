@@ -20,6 +20,7 @@ CONF_SCAN_WINDOW = "scan_window"
 CONF_SCAN_DUPLICATE_FILTER = "scan_duplicate_filter"
 CONF_SCAN_DUPLICATE_CACHE_SIZE = "scan_duplicate_cache_size"
 CONF_ADVERTISEMENT_SEND_INTERVAL_MS = "advertisement_send_interval_ms"
+CONF_ADVERTISEMENT_BATCH_SIZE = "advertisement_batch_size"
 CONF_ADVERTISING_NAME = "advertising_name"
 
 # Legacy parameter support for backward compatibility
@@ -67,6 +68,10 @@ CONFIG_SCHEMA = cv.Schema(
             cv.positive_int,
             cv.Range(min=10, max=1000)
         ),
+        cv.Optional(CONF_ADVERTISEMENT_BATCH_SIZE, default=4): cv.All(
+            cv.positive_int,
+            cv.Range(min=1, max=16)
+        ),
         cv.Optional(CONF_ADVERTISING_NAME, default=""): cv.string_strict,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -104,9 +109,9 @@ async def to_code(config):
     config = _validate_config(config)
 
     # Provide sane defaults for API compile-time constants if not set
-    # Reduced from 5 to 2 to prevent protocol buffer encoding assertion failures
-    # Large batches can exceed TCP send buffer capacity causing proto.h:820 crashes
-    cg.add_build_flag("-DBLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE=2")
+    cg.add_build_flag(
+        "-DBLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE=%d" % config[CONF_ADVERTISEMENT_BATCH_SIZE]
+    )
     cg.add_build_flag("-DBLUETOOTH_PROXY_MAX_CONNECTIONS=%d" % config[CONF_CONNECTION_SLOTS])
 
     var = cg.new_Pvariable(config[CONF_ID])
