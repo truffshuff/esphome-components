@@ -568,8 +568,11 @@ void NimBLEProxy::send_advertisements_() {
   // Get API connection (only accessed from main thread after initial setup)
   void *conn = this->api_connection_;
   if (conn == nullptr) {
+    // No API connection - discard buffer so the same packets are not re-counted
+    // on every subsequent loop() call (which would inflate dropped_no_api).
     this->dropped_no_api_count_ += this->adv_buffer_count_;
-    return;  // No connection, keep buffering
+    this->adv_buffer_count_ = 0;
+    return;
   }
 
   // Cast the opaque buffer to the correct type
@@ -583,13 +586,18 @@ void NimBLEProxy::send_advertisements_() {
     resp.advertisements[i] = buffer[i];
   }
 
-  // Send to the connected Home Assistant API client
-  send_bluetooth_advertisements_to_client(conn, resp);
-  this->forwarded_count_ += resp.advertisements_len;
-
-  // Reset buffer - do this AFTER send completes
+  // Reset buffer BEFORE sending so the NimBLE thread can write new ads
+  // immediately; the local resp copy holds the data safely.
+  uint16_t count = this->adv_buffer_count_;
   this->adv_buffer_count_ = 0;
   this->last_send_time_ = millis();
+
+  // Send to HA; only count as forwarded if the API output buffer accepted it.
+  if (send_bluetooth_advertisements_to_client(conn, resp)) {
+    this->forwarded_count_ += count;
+  } else {
+    this->send_failed_count_ += count;
+  }
 #endif
 }
 
@@ -611,9 +619,10 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u send_failed=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
-             this->discovered_count_, this->forwarded_count_, this->dropped_buffer_full_count_,
+             this->discovered_count_, this->forwarded_count_, this->send_failed_count_,
+             this->dropped_buffer_full_count_,
              this->dropped_scanner_disabled_count_, this->dropped_no_api_count_,
              this->duplicate_seen_count_, this->duplicate_dropped_count_,
              this->scan_duplicate_cache_size_, this->advertisement_send_interval_ms_,

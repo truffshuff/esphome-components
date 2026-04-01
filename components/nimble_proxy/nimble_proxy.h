@@ -207,6 +207,7 @@ class NimBLEProxy : public Component {
   // Diagnostics to correlate local discovery vs API forwarding.
   volatile uint32_t discovered_count_{0};
   uint32_t forwarded_count_{0};
+  uint32_t send_failed_count_{0};
   uint32_t dropped_buffer_full_count_{0};
   uint32_t dropped_scanner_disabled_count_{0};
   uint32_t dropped_no_api_count_{0};
