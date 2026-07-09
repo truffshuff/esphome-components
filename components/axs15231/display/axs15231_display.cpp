@@ -106,6 +106,18 @@ void AXS15231Display::setup() {
   ESP_LOGCONFIG(TAG, "axs15231 setup complete");
 }
 
+void AXS15231Display::recover() {
+  if (!this->setup_complete_) {
+    ESP_LOGW(TAG, "Cannot recover before display setup");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Reinitializing AXS15231 controller in place");
+  this->setup_pins_();
+  this->init_lcd_();
+  this->invalidate_();
+}
+
 bool AXS15231Display::can_proceed() {
   return this->setup_complete_;
 }
@@ -305,6 +317,7 @@ void AXS15231Display::write_to_display_(int x_start, int y_start, int w, int h, 
   }
 
   this->disable();
+  this->flush_count_++;
 }
 
 void AXS15231Display::invalidate_() {

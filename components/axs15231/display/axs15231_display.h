@@ -20,6 +20,11 @@ class AXS15231Display : public display::DisplayBuffer,
   void setup() override;
   bool can_proceed() override;
 
+  // Reinitialize the controller in place. Unlike setup(), this never
+  // reallocates the LVGL buffer and is safe to call after startup.
+  void recover();
+  uint32_t get_flush_count() const { return this->flush_count_; }
+
   void dump_config() override;
 
   // Display overrides
@@ -73,6 +78,7 @@ class AXS15231Display : public display::DisplayBuffer,
   uint16_t x_high_{0};
   uint16_t y_high_{0};
   bool setup_complete_{};
+  uint32_t flush_count_{};
 
   size_t width_{};
   size_t height_{};
