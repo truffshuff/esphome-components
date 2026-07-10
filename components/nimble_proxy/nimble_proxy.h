@@ -32,6 +32,10 @@
 #define BLUETOOTH_PROXY_MAX_CONNECTIONS 3
 #endif
 
+#ifndef BLUETOOTH_PROXY_MAX_GATT_DATA
+#define BLUETOOTH_PROXY_MAX_GATT_DATA 512
+#endif
+
 namespace esphome {
 namespace api {
 class APIConnection;
