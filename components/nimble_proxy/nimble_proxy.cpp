@@ -652,7 +652,8 @@ void NimBLEProxy::loop() {
 }
 
 bool NimBLEProxy::enqueue_api_event_(ApiEventType type, uint64_t address, uint16_t handle,
-                                     const uint8_t *data, uint16_t data_len, int error) {
+                                     const uint8_t *data, uint16_t data_len, int error,
+                                     bool connected) {
   if (data_len > BLUETOOTH_PROXY_MAX_GATT_DATA) {
     this->dropped_api_event_count_++;
     return false;
@@ -669,6 +670,7 @@ bool NimBLEProxy::enqueue_api_event_(ApiEventType type, uint64_t address, uint16
   event.address = address;
   event.handle = handle;
   event.error = error;
+  event.connected = connected;
   event.data_len = data_len;
   if (data_len != 0 && data != nullptr) {
     memcpy(event.data.data(), data, data_len);
@@ -698,8 +700,12 @@ void NimBLEProxy::drain_api_events_() {
     } else if (event.type == ApiEventType::READ_RESPONSE) {
       send_gatt_read_response(this, event.address, event.handle,
                               event.data_len ? event.data.data() : nullptr, event.data_len);
-    } else {
+    } else if (event.type == ApiEventType::ERROR_RESPONSE) {
       send_gatt_error(this, event.address, event.handle, event.error);
+    } else if (event.type == ApiEventType::CONNECTION_RESPONSE) {
+      send_connection_response(this, event.address, event.connected, event.handle, event.error);
+    } else {
+      send_connections_free(this);
     }
   }
 #endif
@@ -932,20 +938,14 @@ void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnect
                conn->conn_handle, conn->address);
 
       // Send success response to Home Assistant
-      this->send_connection_response_(conn, true, 0);
+      this->enqueue_api_event_(ApiEventType::CONNECTION_RESPONSE, conn->address, conn->mtu,
+               nullptr, 0, 0, true);
 
       // Start service discovery automatically
       this->start_service_discovery_(conn);
 
       // Tell HA how many connection slots remain
-      {
-        void *api_conn = nullptr;
-        {
-          std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-          api_conn = this->api_connection_;
-        }
-        this->send_connections_free(api_conn);
-      }
+      this->enqueue_api_event_(ApiEventType::CONNECTIONS_FREE, 0, 0, nullptr, 0);
     } else {
       ESP_LOGW(TAG, "Connection established but conn pointer is null");
     }
@@ -954,16 +954,12 @@ void NimBLEProxy::handle_gap_connect_(struct ble_gap_event *event, NimBLEConnect
     ESP_LOGE(TAG, "Connection failed; status=%d", event->connect.status);
 
     if (conn != nullptr) {
-      this->send_connection_response_(conn, false, event->connect.status);
+      this->enqueue_api_event_(ApiEventType::CONNECTION_RESPONSE, conn->address, conn->mtu,
+               nullptr, 0, event->connect.status);
       this->reset_connection_(conn);
 
       // Tell HA the freed slot is available again
-      void *api_conn = nullptr;
-      {
-        std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-        api_conn = this->api_connection_;
-      }
-      this->send_connections_free(api_conn);
+      this->enqueue_api_event_(ApiEventType::CONNECTIONS_FREE, 0, 0, nullptr, 0);
     }
 
     // Resume advertising if we were advertising
@@ -985,18 +981,14 @@ void NimBLEProxy::handle_gap_disconnect_(struct ble_gap_event *event, NimBLEConn
 
   if (conn != nullptr) {
     // Send disconnection response to Home Assistant
-    this->send_connection_response_(conn, false, 0);
+    this->enqueue_api_event_(ApiEventType::CONNECTION_RESPONSE, conn->address, conn->mtu,
+                 nullptr, 0, 0);
 
     // Reset the connection slot
     this->reset_connection_(conn);
 
     // Tell HA the freed slot is available again
-    void *api_conn = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-      api_conn = this->api_connection_;
-    }
-    this->send_connections_free(api_conn);
+    this->enqueue_api_event_(ApiEventType::CONNECTIONS_FREE, 0, 0, nullptr, 0);
   } else {
     ESP_LOGW(TAG, "Disconnect event for unknown connection handle %d",
              event->disconnect.conn.conn_handle);
