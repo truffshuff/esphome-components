@@ -176,6 +176,18 @@ void NimBLEProxy::setup() {
   ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - post-delay sentinel");
   vTaskDelay(pdMS_TO_TICKS(200));
   ESP_LOGI(TAG, "[DIAG] NimBLEProxy::setup() - second sentinel");
+#ifdef USE_API
+  // Allocate API objects before NimBLE starts scanning so scan callbacks never
+  // perform heap allocation or run API object constructors.
+  this->adv_buffer_ = new esphome::api::BluetoothLERawAdvertisement[BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE];
+  this->adv_buffer_allocated_ = (this->adv_buffer_ != nullptr);
+  if (!this->adv_buffer_allocated_) {
+    ESP_LOGE(TAG, "Failed to allocate advertisement buffer");
+  }
+#endif
+  if (this->scan_duplicate_cache_size_ > 0) {
+    this->recent_adv_signatures_.reserve(this->scan_duplicate_cache_size_);
+  }
 }
 
 void NimBLEProxy::on_sync_() {
@@ -492,24 +504,19 @@ void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
       return;
     }
 
-    if (this->recent_adv_signatures_.size() < this->scan_duplicate_cache_size_) {
+    if (this->recent_adv_signatures_.size() < this->scan_duplicate_cache_size_ &&
+        this->recent_adv_signatures_.size() < this->recent_adv_signatures_.capacity()) {
       this->recent_adv_signatures_.push_back(signature);
-    } else {
+    } else if (this->recent_adv_signatures_.size() >= this->scan_duplicate_cache_size_) {
       this->recent_adv_signatures_[this->recent_adv_signature_index_] = signature;
       this->recent_adv_signature_index_ =
           (this->recent_adv_signature_index_ + 1) % this->scan_duplicate_cache_size_;
+    } else {
+      ESP_LOGW(TAG, "Duplicate cache unavailable; dropping advertisement signature");
+      return;
     }
   }
 
-  // NO MUTEX - Simple volatile write from NimBLE thread, read from main thread
-  // This is safe because only one thread writes and one thread reads
-
-  // Lazy allocation: defer until NimBLE is actually running so that the
-  // api::BluetoothLERawAdvertisement constructor runs after API globals are ready.
-  if (!this->adv_buffer_allocated_) {
-    this->adv_buffer_ = new esphome::api::BluetoothLERawAdvertisement[BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE];
-    this->adv_buffer_allocated_ = (this->adv_buffer_ != nullptr);
-  }
   if (!this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
     return;  // Allocation failed or not yet ready
   }
@@ -605,6 +612,7 @@ void NimBLEProxy::loop() {
   // No mutex needed - volatile variable provides visibility
 
   this->drain_api_events_();
+  this->process_pending_service_response_();
 
   bool should_send = false;
   {
@@ -629,11 +637,12 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u send_failed=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u send_failed=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dropped_api_events=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
              this->discovered_count_, this->forwarded_count_, this->send_failed_count_,
              this->dropped_buffer_full_count_,
              this->dropped_scanner_disabled_count_, this->dropped_no_api_count_,
+             this->dropped_api_event_count_,
              this->duplicate_seen_count_, this->duplicate_dropped_count_,
              this->scan_duplicate_cache_size_, this->advertisement_send_interval_ms_,
              BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE,
@@ -694,6 +703,28 @@ void NimBLEProxy::drain_api_events_() {
     }
   }
 #endif
+}
+
+void NimBLEProxy::process_pending_service_response_() {
+  uint16_t conn_handle = this->pending_service_response_handle_;
+  if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+    return;
+  }
+
+  this->pending_service_response_handle_ = BLE_HS_CONN_HANDLE_NONE;
+  NimBLEConnection *conn = this->get_connection_by_handle_(conn_handle);
+  if (conn == nullptr || !conn->discovery_complete) {
+    this->pending_service_cache_save_ = false;
+    return;
+  }
+
+  if (this->pending_service_cache_save_) {
+    this->pending_service_cache_save_ = false;
+    if (conn->use_cache && !conn->cache_loaded) {
+      this->save_service_cache_(conn);
+    }
+  }
+  this->send_service_response_(conn);
 }
 
 void NimBLEProxy::bluetooth_scanner_set_mode(bool mode) {
@@ -1214,6 +1245,9 @@ void NimBLEProxy::start_service_discovery_(NimBLEConnection *conn) {
   conn->services.clear();
   conn->characteristics.clear();
   conn->descriptors.clear();
+  conn->services.reserve(BLUETOOTH_PROXY_MAX_SERVICES);
+  conn->characteristics.reserve(BLUETOOTH_PROXY_MAX_CHARACTERISTICS);
+  conn->descriptors.reserve(BLUETOOTH_PROXY_MAX_DESCRIPTORS);
   conn->current_service_idx = -1;
   conn->current_char_idx = -1;
   conn->discovery_complete = false;
@@ -1773,21 +1807,12 @@ int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error 
     return 0;
   }
 
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
-    api_conn = global_nimble_proxy->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGW(TAG, "No API connection to send write response");
-    return 0;
-  }
-
   // Check for errors
   if (error->status != 0) {
     ESP_LOGE(TAG, "GATT write failed; conn_handle=%d status=%d", conn_handle, error->status);
-    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::ERROR_RESPONSE,
+                                             conn->address, attr ? attr->handle : 0,
+                                             nullptr, 0, error->status);
     return 0;
   }
 
@@ -1796,7 +1821,8 @@ int NimBLEProxy::on_write_cb_(uint16_t conn_handle, const struct ble_gatt_error 
 
   // For writes, we send an empty read response to indicate success
   // (ESPHome API uses BluetoothGATTReadResponse for write confirmations)
-  send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+  global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::READ_RESPONSE,
+                                           conn->address, attr ? attr->handle : 0, nullptr, 0);
 #endif
 
   return 0;
@@ -1817,21 +1843,12 @@ int NimBLEProxy::on_subscribe_cb_(uint16_t conn_handle, const struct ble_gatt_er
     return 0;
   }
 
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
-    api_conn = global_nimble_proxy->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGW(TAG, "No API connection to send subscribe response");
-    return 0;
-  }
-
   // Check for errors
   if (error->status != 0) {
     ESP_LOGE(TAG, "CCCD write failed; conn_handle=%d status=%d", conn_handle, error->status);
-    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::ERROR_RESPONSE,
+                                             conn->address, attr ? attr->handle : 0,
+                                             nullptr, 0, error->status);
     return 0;
   }
 
@@ -1840,7 +1857,8 @@ int NimBLEProxy::on_subscribe_cb_(uint16_t conn_handle, const struct ble_gatt_er
 
   // For CCCD writes (subscribe/unsubscribe), we send an empty read response to indicate success
   // (ESPHome API uses BluetoothGATTReadResponse for write confirmations)
-  send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+  global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::READ_RESPONSE,
+                                           conn->address, attr ? attr->handle : 0, nullptr, 0);
 #endif
 
   return 0;
@@ -1870,6 +1888,12 @@ int NimBLEProxy::on_disc_svc_cb_(uint16_t conn_handle, const struct ble_gatt_err
       ESP_LOGE(TAG, "Service discovery failed; status=%d", error->status);
       conn->state = NimBLEConnectionState::ERROR;
     }
+    return 0;
+  }
+
+  if (conn->services.size() >= conn->services.capacity()) {
+    ESP_LOGE(TAG, "Service discovery exceeded maximum of %u services", BLUETOOTH_PROXY_MAX_SERVICES);
+    conn->state = NimBLEConnectionState::ERROR;
     return 0;
   }
 
@@ -1920,6 +1944,13 @@ int NimBLEProxy::on_disc_chr_cb_(uint16_t conn_handle, const struct ble_gatt_err
     return 0;
   }
 
+  if (conn->characteristics.size() >= conn->characteristics.capacity()) {
+    ESP_LOGE(TAG, "Characteristic discovery exceeded maximum of %u characteristics",
+             BLUETOOTH_PROXY_MAX_CHARACTERISTICS);
+    conn->state = NimBLEConnectionState::ERROR;
+    return 0;
+  }
+
   // Store the characteristic
   conn->characteristics.push_back(*chr);
 
@@ -1958,18 +1989,20 @@ int NimBLEProxy::on_disc_dsc_cb_(uint16_t conn_handle, const struct ble_gatt_err
         conn->state = NimBLEConnectionState::READY;
         conn->discovery_complete = true;
 
-        // Save to cache if cache is enabled
-        if (conn->use_cache && !conn->cache_loaded) {
-          global_nimble_proxy->save_service_cache_(conn);
-        }
-
-        // Send all discovered services/characteristics/descriptors to Home Assistant
-        global_nimble_proxy->send_service_response_(conn);
+        // Defer cache persistence and API response construction to loop().
+        global_nimble_proxy->pending_service_cache_save_ = conn->use_cache && !conn->cache_loaded;
+        global_nimble_proxy->pending_service_response_handle_ = conn->conn_handle;
       }
     } else {
       ESP_LOGE(TAG, "Descriptor discovery failed; status=%d", error->status);
       conn->state = NimBLEConnectionState::ERROR;
     }
+    return 0;
+  }
+
+  if (conn->descriptors.size() >= conn->descriptors.capacity()) {
+    ESP_LOGE(TAG, "Descriptor discovery exceeded maximum of %u descriptors", BLUETOOTH_PROXY_MAX_DESCRIPTORS);
+    conn->state = NimBLEConnectionState::ERROR;
     return 0;
   }
 
