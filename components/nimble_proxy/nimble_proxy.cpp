@@ -604,6 +604,8 @@ void NimBLEProxy::loop() {
   // ESPHome API is not thread-safe - NimBLE thread only buffers, never sends
   // No mutex needed - volatile variable provides visibility
 
+  this->drain_api_events_();
+
   bool should_send = false;
   {
     std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
@@ -638,6 +640,60 @@ void NimBLEProxy::loop() {
              this->adv_buffer_count_);
     this->last_diag_log_ms_ = now;
   }
+}
+
+bool NimBLEProxy::enqueue_api_event_(ApiEventType type, uint64_t address, uint16_t handle,
+                                     const uint8_t *data, uint16_t data_len, int error) {
+  if (data_len > BLUETOOTH_PROXY_MAX_GATT_DATA) {
+    this->dropped_api_event_count_++;
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(this->api_event_mutex_);
+  if (this->api_event_count_ >= BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE) {
+    this->dropped_api_event_count_++;
+    return false;
+  }
+
+  auto &event = this->api_events_[this->api_event_tail_];
+  event.type = type;
+  event.address = address;
+  event.handle = handle;
+  event.error = error;
+  event.data_len = data_len;
+  if (data_len != 0 && data != nullptr) {
+    memcpy(event.data.data(), data, data_len);
+  }
+  this->api_event_tail_ = (this->api_event_tail_ + 1) % BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE;
+  this->api_event_count_++;
+  return true;
+}
+
+void NimBLEProxy::drain_api_events_() {
+#ifdef USE_API
+  while (true) {
+    ApiEvent event;
+    {
+      std::lock_guard<std::mutex> lock(this->api_event_mutex_);
+      if (this->api_event_count_ == 0) {
+        return;
+      }
+      event = this->api_events_[this->api_event_head_];
+      this->api_event_head_ = (this->api_event_head_ + 1) % BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE;
+      this->api_event_count_--;
+    }
+
+    if (event.type == ApiEventType::NOTIFICATION) {
+      send_gatt_notification(this, event.address, event.handle,
+                             event.data_len ? event.data.data() : nullptr, event.data_len);
+    } else if (event.type == ApiEventType::READ_RESPONSE) {
+      send_gatt_read_response(this, event.address, event.handle,
+                              event.data_len ? event.data.data() : nullptr, event.data_len);
+    } else {
+      send_gatt_error(this, event.address, event.handle, event.error);
+    }
+  }
+#endif
 }
 
 void NimBLEProxy::bluetooth_scanner_set_mode(bool mode) {
@@ -945,17 +1001,6 @@ void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnecti
   }
 
 #ifdef USE_API
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-    api_conn = this->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGV(TAG, "No API connection to forward notification");
-    return;
-  }
-
   // Extract notification data from os_mbuf
   if (event->notify_rx.om != nullptr) {
     uint16_t data_len = OS_MBUF_PKTLEN(event->notify_rx.om);
@@ -979,10 +1024,12 @@ void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnecti
              event->notify_rx.attr_handle, data_len);
 
     // Send notification to Home Assistant
-    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, data.data(), data_len);
+    this->enqueue_api_event_(ApiEventType::NOTIFICATION, conn->address,
+                 event->notify_rx.attr_handle, data.data(), data_len);
   } else {
     ESP_LOGV(TAG, "Notification with no data");
-    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, nullptr, 0);
+    this->enqueue_api_event_(ApiEventType::NOTIFICATION, conn->address,
+                 event->notify_rx.attr_handle, nullptr, 0);
   }
 #endif
 }
@@ -1661,21 +1708,12 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
     return 0;
   }
 
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(global_nimble_proxy->api_connection_mutex_);
-    api_conn = global_nimble_proxy->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGW(TAG, "No API connection to send read response");
-    return 0;
-  }
-
   // Check for errors
   if (error->status != 0) {
     ESP_LOGE(TAG, "GATT read failed; conn_handle=%d status=%d", conn_handle, error->status);
-    send_gatt_error(api_conn, conn->address, attr ? attr->handle : 0, error->status);
+    global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::ERROR_RESPONSE,
+                                             conn->address, attr ? attr->handle : 0,
+                                             nullptr, 0, error->status);
     return 0;
   }
 
@@ -1687,7 +1725,9 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
     if (data_len > BLUETOOTH_PROXY_MAX_GATT_DATA) {
       ESP_LOGW(TAG, "Rejecting oversized GATT read: len=%u max=%u", data_len,
                BLUETOOTH_PROXY_MAX_GATT_DATA);
-      send_gatt_error(api_conn, conn->address, attr->handle, BLE_HS_EMSGSIZE);
+      global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::ERROR_RESPONSE,
+                       conn->address, attr->handle, nullptr, 0,
+                       BLE_HS_EMSGSIZE);
       return 0;
     }
 
@@ -1697,7 +1737,8 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
     int rc = os_mbuf_copydata(attr->om, 0, data_len, data.data());
     if (rc != 0) {
       ESP_LOGE(TAG, "Failed to copy data from mbuf; rc=%d", rc);
-      send_gatt_error(api_conn, conn->address, attr->handle, rc);
+      global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::ERROR_RESPONSE,
+                       conn->address, attr->handle, nullptr, 0, rc);
       return 0;
     }
 
@@ -1705,10 +1746,12 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
              conn_handle, attr->handle, data_len);
 
     // Send read response
-    send_gatt_read_response(api_conn, conn->address, attr->handle, data.data(), data_len);
+    global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::READ_RESPONSE,
+                         conn->address, attr->handle, data.data(), data_len);
   } else {
     ESP_LOGW(TAG, "Read completed but no data available");
-    send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
+    global_nimble_proxy->enqueue_api_event_(NimBLEProxy::ApiEventType::READ_RESPONSE,
+                         conn->address, attr ? attr->handle : 0, nullptr, 0);
   }
 #endif
 
