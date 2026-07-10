@@ -143,7 +143,7 @@ static uint32_t advertisement_signature_(const ble_gap_disc_desc *disc) {
 }
 
 // Static pointer for callbacks
-static NimBLEProxy *global_nimble_proxy = nullptr;
+NimBLEProxy *global_nimble_proxy = nullptr;
 
 }  // namespace nimble_proxy
 
@@ -559,6 +559,7 @@ void NimBLEProxy::send_advertisements_() {
   }
 
   std::lock_guard<std::mutex> api_send_lock(api_send_mutex);
+  std::lock_guard<std::mutex> api_connection_lock(this->api_connection_mutex_);
 
   // Get API connection while the send/lifetime lock is held.
   void *conn = this->api_connection_;

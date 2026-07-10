@@ -26,10 +26,7 @@ inline bool send_bluetooth_advertisements_to_client(
   ESP_LOGD("nimble_proxy", "Sending %d BLE advertisements to API client", resp.advertisements_len);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
-  if (!conn->send_message(resp)) {
+  if (global_nimble_proxy == nullptr || !global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send BLE advertisements to API connection %p", api_connection);
     return false;
   }
@@ -50,11 +47,8 @@ inline void send_scanner_state_to_client(
            resp.state, resp.mode);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Send the message using the API connection's send_message method
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send scanner state to API connection %p", api_connection);
   }
 }
@@ -76,9 +70,6 @@ inline void send_connection_response(
            address, connected, mtu, error);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Build and send the response
   api::BluetoothDeviceConnectionResponse resp;
   resp.address = address;
@@ -86,7 +77,7 @@ inline void send_connection_response(
   resp.mtu = mtu;
   resp.error = error;
 
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send connection response to API connection %p", api_connection);
   }
 }
@@ -108,9 +99,6 @@ inline void send_gatt_read_response(
            address, handle, len);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Build and send the response
   api::BluetoothGATTReadResponse resp;
   resp.address = address;
@@ -125,7 +113,7 @@ inline void send_gatt_read_response(
     resp.data_len_ = 0;
   }
 
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT read response to API connection %p", api_connection);
   }
 }
@@ -146,16 +134,13 @@ inline void send_gatt_error(
            address, handle, error);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Build and send the error response
   api::BluetoothGATTErrorResponse resp;
   resp.address = address;
   resp.handle = handle;
   resp.error = error;
 
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT error to API connection %p", api_connection);
   }
 }
@@ -186,14 +171,11 @@ inline void send_gatt_services_done_response(
   ESP_LOGD("nimble_proxy", "Sending GATT services done (address=%012llX) to API client", address);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Build and send the response
   api::BluetoothGATTGetServicesDoneResponse resp;
   resp.address = address;
 
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT services done response to API connection %p", api_connection);
   }
 }
@@ -215,9 +197,6 @@ inline void send_gatt_notification(
            address, handle, len);
 
   // Cast void* back to APIConnection*
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-  std::lock_guard<std::mutex> send_lock(api_send_mutex);
-
   // Build and send the notification
   api::BluetoothGATTNotifyDataResponse resp;
   resp.address = address;
@@ -232,7 +211,7 @@ inline void send_gatt_notification(
     resp.data_len_ = 0;
   }
 
-  if (!conn->send_message(resp)) {
+  if (!global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send GATT notification to API connection %p", api_connection);
   }
 }
@@ -246,13 +225,11 @@ inline void send_bluetooth_connections_free(
 
   if (api_connection == nullptr) return;
 
-  auto *conn = static_cast<api::APIConnection *>(api_connection);
-
   api::BluetoothConnectionsFreeResponse resp;
   resp.free = free_connections;
   resp.limit = total_connections;
 
-  if (!conn->send_message(resp)) {
+  if (global_nimble_proxy == nullptr || !global_nimble_proxy->send_api_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send connections free response");
   }
 }
