@@ -1273,21 +1273,8 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
     return;
   }
 
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-    api_conn = this->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGW(TAG, "No API connection to send service response");
-    return;
-  }
-
   ESP_LOGI(TAG, "Sending service discovery results: %d services, %d characteristics, %d descriptors",
            conn->services.size(), conn->characteristics.size(), conn->descriptors.size());
-
-  auto *api_connection = static_cast<esphome::api::APIConnection *>(api_conn);
 
   // Build the nested service structure
   api::BluetoothGATTGetServicesResponse resp;
@@ -1345,12 +1332,12 @@ void NimBLEProxy::send_service_response_(NimBLEConnection *conn) {
   }
 
   // Send the complete response
-  if (!api_connection->send_message(resp)) {
+  if (!this->send_api_message(resp)) {
     ESP_LOGW(TAG, "Failed to send GATT services response");
   }
 
   // Send completion message
-  send_gatt_services_done_response(api_conn, conn->address);
+  send_gatt_services_done_response(this, conn->address);
 
   ESP_LOGI(TAG, "Service discovery complete for address=%012llX", conn->address);
 #endif
@@ -2028,27 +2015,15 @@ void NimBLEProxy::delete_bond_(uint64_t address) {
 
 void NimBLEProxy::send_pairing_response_(uint64_t address, bool paired, int error) {
 #ifdef USE_API
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-    api_conn = this->api_connection_;
-  }
-
-  if (api_conn == nullptr) {
-    ESP_LOGW(TAG, "No API connection to send pairing response");
-    return;
-  }
-
   // Use the same response structure as connection responses
   // Home Assistant treats pairing responses similarly to connection responses
-  auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
   esphome::api::BluetoothDeviceConnectionResponse resp;
   resp.address = address;
   resp.connected = paired;  // Use connected field to indicate paired status
   resp.mtu = 23;  // Default MTU
   resp.error = error;
 
-  if (!connection->send_message(resp)) {
+  if (!this->send_api_message(resp)) {
     ESP_LOGW(TAG, "Failed to send pairing response");
   } else {
     ESP_LOGI(TAG, "Sent pairing response: address=%012llX paired=%d error=%d",
@@ -2600,18 +2575,10 @@ void NimBLEProxy::bluetooth_set_connection_params(const T &msg) {
   if (conn == nullptr || conn->state == NimBLEConnectionState::IDLE ||
       conn->conn_handle == BLE_HS_CONN_HANDLE_NONE) {
     ESP_LOGW(TAG, "bluetooth_set_connection_params: no active connection for address=%012llX", msg.address);
-    void *api_conn = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-      api_conn = this->api_connection_;
-    }
-    if (api_conn != nullptr) {
-      auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
-      esphome::api::BluetoothSetConnectionParamsResponse resp;
-      resp.address = msg.address;
-      resp.error = BLE_HS_ENOTCONN;
-      connection->send_message(resp);
-    }
+    esphome::api::BluetoothSetConnectionParamsResponse resp;
+    resp.address = msg.address;
+    resp.error = BLE_HS_ENOTCONN;
+    this->send_api_message(resp);
     return;
   }
 
@@ -2626,18 +2593,10 @@ void NimBLEProxy::bluetooth_set_connection_params(const T &msg) {
 
   int rc = ble_gap_update_params(conn->conn_handle, &params);
 
-  void *api_conn = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
-    api_conn = this->api_connection_;
-  }
-  if (api_conn != nullptr) {
-    auto *connection = static_cast<esphome::api::APIConnection *>(api_conn);
-    esphome::api::BluetoothSetConnectionParamsResponse resp;
-    resp.address = msg.address;
-    resp.error = (rc == 0) ? 0 : rc;
-    connection->send_message(resp);
-  }
+  esphome::api::BluetoothSetConnectionParamsResponse resp;
+  resp.address = msg.address;
+  resp.error = (rc == 0) ? 0 : rc;
+  this->send_api_message(resp);
 
   if (rc != 0) {
     ESP_LOGW(TAG, "ble_gap_update_params failed; rc=%d", rc);
