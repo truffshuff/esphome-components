@@ -7,6 +7,10 @@
 namespace esphome {
 namespace nimble_proxy {
 
+// Serializes APIConnection sends with unsubscribe/destruction. The API layer
+// uses raw connection pointers, so a mutex is required around every send.
+extern std::mutex api_send_mutex;
+
 // Helper to send bluetooth advertisements to the connected API client.
 // Returns true if the message was accepted by the API output buffer, false if
 // the send failed (e.g. API output buffer full / connection congested).
@@ -23,6 +27,7 @@ inline bool send_bluetooth_advertisements_to_client(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   if (!conn->send_message(resp)) {
     ESP_LOGW("nimble_proxy", "Failed to send BLE advertisements to API connection %p", api_connection);
@@ -46,6 +51,7 @@ inline void send_scanner_state_to_client(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Send the message using the API connection's send_message method
   if (!conn->send_message(resp)) {
@@ -71,6 +77,7 @@ inline void send_connection_response(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Build and send the response
   api::BluetoothDeviceConnectionResponse resp;
@@ -102,6 +109,7 @@ inline void send_gatt_read_response(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Build and send the response
   api::BluetoothGATTReadResponse resp;
@@ -139,6 +147,7 @@ inline void send_gatt_error(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Build and send the error response
   api::BluetoothGATTErrorResponse resp;
@@ -178,6 +187,7 @@ inline void send_gatt_services_done_response(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Build and send the response
   api::BluetoothGATTGetServicesDoneResponse resp;
@@ -206,6 +216,7 @@ inline void send_gatt_notification(
 
   // Cast void* back to APIConnection*
   auto *conn = static_cast<api::APIConnection *>(api_connection);
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
 
   // Build and send the notification
   api::BluetoothGATTNotifyDataResponse resp;
