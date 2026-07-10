@@ -116,6 +116,16 @@ void NimBLEBase::setup() {
   ble_hs_cfg.sync_cb = NimBLEBase::on_sync_;
   ble_hs_cfg.reset_cb = NimBLEBase::on_reset_;
 
+  // Configure pairing before the host starts. This implementation has no
+  // trusted user-confirmation channel, so it must not claim MITM protection or
+  // silently accept numeric comparisons/default passkeys.
+  ble_hs_cfg.sm_bonding = 1;
+  ble_hs_cfg.sm_mitm = 0;
+  ble_hs_cfg.sm_sc = 1;
+  ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+  ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+  ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+
   // Initialize NimBLE port (handles controller init internally)
   ESP_LOGV(TAG, "Calling nimble_port_init()...");
   esp_err_t ret = nimble_port_init();

@@ -232,6 +232,9 @@ class NimBLEProxy : public Component {
   volatile uint16_t adv_buffer_count_{0};
   uint32_t last_send_time_{0};
   bool adv_buffer_allocated_{false};
+  // Protects advertisement-buffer allocation, writes, copies, and count
+  // updates across the NimBLE host task and ESPHome main loop.
+  std::mutex adv_buffer_mutex_;
 
   // Connection tracking
   std::array<NimBLEConnection, BLUETOOTH_PROXY_MAX_CONNECTIONS> connections_;

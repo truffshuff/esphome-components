@@ -189,20 +189,7 @@ void NimBLEProxy::on_sync_() {
     return;
   }
 
-  // Configure security manager for pairing/bonding support
-  // Enable bonding (store keys in NVS)
-  ble_hs_cfg.sm_bonding = 1;
-  // Enable MITM protection (Man-in-the-Middle)
-  ble_hs_cfg.sm_mitm = 1;
-  // Enable Secure Connections (LE Secure Connections pairing)
-  ble_hs_cfg.sm_sc = 1;
-  // Set IO capabilities to KeyboardDisplay (can display and input passkeys)
-  ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_KEYBOARD_DISP;
-  // Our identity address is public (not random)
-  ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-  ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-
-  ESP_LOGI(TAG, "Security manager configured (bonding=%d, MITM=%d, SC=%d, IO=%d)",
+  ESP_LOGI(TAG, "Security manager configured before host startup (bonding=%d, MITM=%d, SC=%d, IO=%d)",
            ble_hs_cfg.sm_bonding, ble_hs_cfg.sm_mitm, ble_hs_cfg.sm_sc, ble_hs_cfg.sm_io_cap);
 
   ESP_LOGI(TAG, "Setting initialized flag and starting BLE operations");
@@ -479,6 +466,8 @@ void NimBLEProxy::setup_services_() {
 
 void NimBLEProxy::add_advertisement_(const ble_gap_disc_desc *disc) {
 #ifdef USE_API
+  std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
+
   if (!this->scanner_enabled_) {
     this->dropped_scanner_disabled_count_++;
     return;
@@ -561,6 +550,8 @@ void NimBLEProxy::send_advertisements_() {
 #ifdef USE_API
   // Called ONLY from main thread (loop()) - no mutex needed
 
+  std::unique_lock<std::mutex> buffer_lock(this->adv_buffer_mutex_);
+
   if (this->adv_buffer_count_ == 0 || !this->adv_buffer_allocated_ || this->adv_buffer_ == nullptr) {
     return;
   }
@@ -586,8 +577,9 @@ void NimBLEProxy::send_advertisements_() {
     resp.advertisements[i] = buffer[i];
   }
 
-  // Reset buffer BEFORE sending so the NimBLE thread can write new ads
-  // immediately; the local resp copy holds the data safely.
+  // Reset buffer BEFORE sending so the NimBLE thread can write new ads. The
+  // lock remains held through send_message(): this prevents the API send from
+  // racing with a producer that might otherwise reuse the buffer.
   uint16_t count = this->adv_buffer_count_;
   this->adv_buffer_count_ = 0;
   this->last_send_time_ = millis();
@@ -606,10 +598,20 @@ void NimBLEProxy::loop() {
   // ESPHome API is not thread-safe - NimBLE thread only buffers, never sends
   // No mutex needed - volatile variable provides visibility
 
-  if (this->adv_buffer_count_ > 0) {
+  bool should_send = false;
+  {
+    std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
+    should_send = this->adv_buffer_count_ > 0;
+  }
+  if (should_send) {
     uint32_t now = millis();
+    uint16_t buffered = 0;
+    {
+      std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
+      buffered = this->adv_buffer_count_;
+    }
     // Send when buffer is full OR after configured timeout.
-    if (this->adv_buffer_count_ >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE ||
+    if (buffered >= BLUETOOTH_PROXY_ADVERTISEMENT_BATCH_SIZE ||
         (now - this->last_send_time_) >= this->advertisement_send_interval_ms_) {
       this->send_advertisements_();  // ONLY called from main thread - SAFE
     }
@@ -647,6 +649,7 @@ void NimBLEProxy::bluetooth_scanner_set_mode(bool mode) {
     }
   } else {
     // Drop any buffered advertisements immediately when scanner is disabled.
+    std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
     this->adv_buffer_count_ = 0;
 
     // Stop scanning if currently scanning
@@ -789,7 +792,10 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
   ESP_LOGI(TAG, "API connection %p subscribed (flags=0x%x)", conn, flags);
 
   // Clear any stale buffered payloads captured before API subscription.
-  this->adv_buffer_count_ = 0;
+  {
+    std::lock_guard<std::mutex> buffer_lock(this->adv_buffer_mutex_);
+    this->adv_buffer_count_ = 0;
+  }
 
   // Restart scanning to ensure HA receives a fresh stream immediately after
   // subscribing, even if the scanner had been running before API connected.
@@ -988,8 +994,6 @@ void NimBLEProxy::handle_gap_passkey_action_(struct ble_gap_event *event, NimBLE
     return;
   }
 
-  struct ble_sm_io pkey = {0};
-
   switch (event->passkey.params.action) {
     case BLE_SM_IOACT_NONE:
       ESP_LOGI(TAG, "No passkey action required (Just Works pairing)");
@@ -1002,33 +1006,15 @@ void NimBLEProxy::handle_gap_passkey_action_(struct ble_gap_event *event, NimBLE
       break;
 
     case BLE_SM_IOACT_INPUT:
-      ESP_LOGI(TAG, "Passkey input required - using default 000000");
-      // Default passkey (000000) for automatic pairing
-      // In a real implementation, you might want to prompt the user
-      pkey.action = event->passkey.params.action;
-      pkey.passkey = 0;  // Default passkey
-      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      ESP_LOGW(TAG, "Passkey input requested but no trusted input channel is configured; rejecting pairing");
       break;
 
     case BLE_SM_IOACT_DISP:
-      ESP_LOGI(TAG, "Passkey display required - generating passkey");
-      // Generate a random 6-digit passkey
-      pkey.action = event->passkey.params.action;
-      pkey.passkey = esp_random() % 1000000;
-      ESP_LOGI(TAG, "*** PAIRING PASSKEY: %06lu ***", (unsigned long)pkey.passkey);
-      // TODO: Send passkey to Home Assistant for display to user
-      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      ESP_LOGW(TAG, "Passkey display requested but no trusted display channel is configured; rejecting pairing");
       break;
 
     case BLE_SM_IOACT_NUMCMP:
-      ESP_LOGI(TAG, "Numeric comparison required - auto-accepting");
-      // Auto-accept numeric comparison
-      // In a real implementation, you'd display the number and ask user to confirm
-      pkey.action = event->passkey.params.action;
-      pkey.numcmp_accept = 1;  // Auto-accept
-      ESP_LOGI(TAG, "*** CONFIRM PAIRING NUMBER: %06lu ***",
-               (unsigned long)event->passkey.params.numcmp);
-      ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      ESP_LOGW(TAG, "Numeric comparison requested but no trusted confirmation channel is configured; rejecting pairing");
       break;
 
     default:
