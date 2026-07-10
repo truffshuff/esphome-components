@@ -4,6 +4,10 @@
 #include "esphome/core/log.h"
 #include "esphome/core/defines.h"
 
+#ifdef USE_API
+#include "esphome/components/api/api_connection.h"
+#endif
+
 // ESP-IDF native NimBLE headers
 #include "esp_bt.h"
 #include "host/ble_hs.h"
@@ -29,7 +33,14 @@
 #endif
 
 namespace esphome {
+namespace api {
+class APIConnection;
+}
 namespace nimble_proxy {
+
+class NimBLEProxy;
+extern NimBLEProxy *global_nimble_proxy;
+extern std::mutex api_send_mutex;
 
 // Connection state enum for tracking BLE connection lifecycle
 enum class NimBLEConnectionState : uint8_t {
@@ -161,6 +172,16 @@ class NimBLEProxy : public Component {
 
   // Bluetooth proxy API methods
 #ifdef USE_API
+  template<typename T> bool send_api_message(T &msg) {
+    std::lock_guard<std::mutex> send_lock(api_send_mutex);
+    std::lock_guard<std::mutex> connection_lock(this->api_connection_mutex_);
+    if (this->api_connection_ == nullptr) {
+      return false;
+    }
+    auto *connection = static_cast<api::APIConnection *>(this->api_connection_);
+    return connection->send_message(msg);
+  }
+
   template<typename T> void bluetooth_device_request(const T &msg);
   template<typename T> void bluetooth_gatt_read(const T &msg);
   template<typename T> void bluetooth_gatt_write(const T &msg);
