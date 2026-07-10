@@ -40,6 +40,18 @@
 #define BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE 16
 #endif
 
+#ifndef BLUETOOTH_PROXY_MAX_SERVICES
+#define BLUETOOTH_PROXY_MAX_SERVICES 64
+#endif
+
+#ifndef BLUETOOTH_PROXY_MAX_CHARACTERISTICS
+#define BLUETOOTH_PROXY_MAX_CHARACTERISTICS 128
+#endif
+
+#ifndef BLUETOOTH_PROXY_MAX_DESCRIPTORS
+#define BLUETOOTH_PROXY_MAX_DESCRIPTORS 256
+#endif
+
 namespace esphome {
 namespace api {
 class APIConnection;
@@ -248,6 +260,8 @@ class NimBLEProxy : public Component {
   volatile uint32_t duplicate_seen_count_{0};
   volatile uint32_t duplicate_dropped_count_{0};
   uint32_t last_diag_log_ms_{0};
+  volatile uint16_t pending_service_response_handle_{BLE_HS_CONN_HANDLE_NONE};
+  volatile bool pending_service_cache_save_{false};
 
   // Fixed-size ring of recent advertisement signatures used for optional
   // software duplicate suppression.
@@ -297,6 +311,7 @@ class NimBLEProxy : public Component {
   void add_advertisement_(const ble_gap_disc_desc *disc);
   void send_scanner_state_();
   void drain_api_events_();
+  void process_pending_service_response_();
 
   // Connection management helpers
   NimBLEConnection* get_connection_(uint64_t address, bool reserve);
