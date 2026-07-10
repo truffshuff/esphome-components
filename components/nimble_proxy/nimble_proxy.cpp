@@ -46,6 +46,8 @@ extern "C" void ble_store_config_init(void);
 namespace esphome {
 namespace nimble_proxy {
 
+std::mutex api_send_mutex;
+
 static const char *const TAG = "nimble_proxy";
 
 static bool looks_like_mac_suffix_(const std::string &value) {
@@ -556,7 +558,9 @@ void NimBLEProxy::send_advertisements_() {
     return;
   }
 
-  // Get API connection (only accessed from main thread after initial setup)
+  std::lock_guard<std::mutex> api_send_lock(api_send_mutex);
+
+  // Get API connection while the send/lifetime lock is held.
   void *conn = this->api_connection_;
   if (conn == nullptr) {
     // No API connection - discard buffer so the same packets are not re-counted
@@ -585,7 +589,8 @@ void NimBLEProxy::send_advertisements_() {
   this->last_send_time_ = millis();
 
   // Send to HA; only count as forwarded if the API output buffer accepted it.
-  if (send_bluetooth_advertisements_to_client(conn, resp)) {
+  auto *api_connection = static_cast<esphome::api::APIConnection *>(conn);
+  if (api_connection->send_message(resp)) {
     this->forwarded_count_ += count;
   } else {
     this->send_failed_count_ += count;
@@ -815,6 +820,7 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
 }
 
 void NimBLEProxy::unsubscribe_api_connection(void *conn) {
+  std::lock_guard<std::mutex> send_lock(api_send_mutex);
   std::lock_guard<std::mutex> lock(this->api_connection_mutex_);
   if (this->api_connection_ == conn) {
     this->api_connection_ = nullptr;
