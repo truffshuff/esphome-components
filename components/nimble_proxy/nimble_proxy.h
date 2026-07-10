@@ -36,6 +36,10 @@
 #define BLUETOOTH_PROXY_MAX_GATT_DATA 512
 #endif
 
+#ifndef BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE
+#define BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE 16
+#endif
+
 namespace esphome {
 namespace api {
 class APIConnection;
@@ -214,6 +218,10 @@ class NimBLEProxy : public Component {
   // Fills a 18-byte buffer with a NUL-terminated MAC string ("AA:BB:CC:DD:EE:FF").
   void get_bluetooth_mac_address_pretty(char out[18]);
 
+  enum class ApiEventType : uint8_t { NOTIFICATION, READ_RESPONSE, ERROR_RESPONSE };
+  bool enqueue_api_event_(ApiEventType type, uint64_t address, uint16_t handle,
+                          const uint8_t *data, uint16_t data_len, int error = 0);
+
  protected:
   bool active_{true};
   uint8_t connection_slots_{3};  // Renamed from max_connections_ to match Bluedroid API
@@ -236,6 +244,7 @@ class NimBLEProxy : public Component {
   uint32_t dropped_buffer_full_count_{0};
   uint32_t dropped_scanner_disabled_count_{0};
   uint32_t dropped_no_api_count_{0};
+  uint32_t dropped_api_event_count_{0};
   volatile uint32_t duplicate_seen_count_{0};
   volatile uint32_t duplicate_dropped_count_{0};
   uint32_t last_diag_log_ms_{0};
@@ -265,6 +274,20 @@ class NimBLEProxy : public Component {
   std::array<NimBLEConnection, BLUETOOTH_PROXY_MAX_CONNECTIONS> connections_;
   std::mutex connections_mutex_;
 
+  struct ApiEvent {
+    ApiEventType type{ApiEventType::NOTIFICATION};
+    uint64_t address{0};
+    uint16_t handle{0};
+    int error{0};
+    uint16_t data_len{0};
+    std::array<uint8_t, BLUETOOTH_PROXY_MAX_GATT_DATA> data{};
+  };
+  std::array<ApiEvent, BLUETOOTH_PROXY_API_EVENT_QUEUE_SIZE> api_events_{};
+  uint8_t api_event_head_{0};
+  uint8_t api_event_tail_{0};
+  uint8_t api_event_count_{0};
+  std::mutex api_event_mutex_;
+
   void start_scan_();
   void stop_scan_();
   void start_advertising_();
@@ -273,6 +296,7 @@ class NimBLEProxy : public Component {
   void send_advertisements_();
   void add_advertisement_(const ble_gap_disc_desc *disc);
   void send_scanner_state_();
+  void drain_api_events_();
 
   // Connection management helpers
   NimBLEConnection* get_connection_(uint64_t address, bool reserve);
