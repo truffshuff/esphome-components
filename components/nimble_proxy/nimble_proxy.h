@@ -230,9 +230,16 @@ class NimBLEProxy : public Component {
   // Fills a 18-byte buffer with a NUL-terminated MAC string ("AA:BB:CC:DD:EE:FF").
   void get_bluetooth_mac_address_pretty(char out[18]);
 
-  enum class ApiEventType : uint8_t { NOTIFICATION, READ_RESPONSE, ERROR_RESPONSE };
+  enum class ApiEventType : uint8_t {
+    NOTIFICATION,
+    READ_RESPONSE,
+    ERROR_RESPONSE,
+    CONNECTION_RESPONSE,
+    CONNECTIONS_FREE,
+  };
   bool enqueue_api_event_(ApiEventType type, uint64_t address, uint16_t handle,
-                          const uint8_t *data, uint16_t data_len, int error = 0);
+                          const uint8_t *data, uint16_t data_len, int error = 0,
+                          bool connected = false);
 
  protected:
   bool active_{true};
@@ -293,6 +300,7 @@ class NimBLEProxy : public Component {
     uint64_t address{0};
     uint16_t handle{0};
     int error{0};
+    bool connected{false};
     uint16_t data_len{0};
     std::array<uint8_t, BLUETOOTH_PROXY_MAX_GATT_DATA> data{};
   };
