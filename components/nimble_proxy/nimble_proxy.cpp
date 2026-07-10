@@ -960,14 +960,18 @@ void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnecti
   if (event->notify_rx.om != nullptr) {
     uint16_t data_len = OS_MBUF_PKTLEN(event->notify_rx.om);
 
-    // Allocate temporary buffer for the data
-    uint8_t *data = new uint8_t[data_len];
+    if (data_len > BLUETOOTH_PROXY_MAX_GATT_DATA) {
+      ESP_LOGW(TAG, "Dropping oversized notification: len=%u max=%u", data_len,
+               BLUETOOTH_PROXY_MAX_GATT_DATA);
+      return;
+    }
+
+    std::array<uint8_t, BLUETOOTH_PROXY_MAX_GATT_DATA> data{};
 
     // Copy data from mbuf chain
-    int rc = os_mbuf_copydata(event->notify_rx.om, 0, data_len, data);
+    int rc = os_mbuf_copydata(event->notify_rx.om, 0, data_len, data.data());
     if (rc != 0) {
       ESP_LOGE(TAG, "Failed to copy notification data from mbuf; rc=%d", rc);
-      delete[] data;
       return;
     }
 
@@ -975,10 +979,7 @@ void NimBLEProxy::handle_gap_notify_(struct ble_gap_event *event, NimBLEConnecti
              event->notify_rx.attr_handle, data_len);
 
     // Send notification to Home Assistant
-    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, data, data_len);
-
-    // Clean up
-    delete[] data;
+    send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, data.data(), data_len);
   } else {
     ESP_LOGV(TAG, "Notification with no data");
     send_gatt_notification(api_conn, conn->address, event->notify_rx.attr_handle, nullptr, 0);
@@ -1683,14 +1684,19 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
     // Get the data length
     uint16_t data_len = OS_MBUF_PKTLEN(attr->om);
 
-    // Allocate temporary buffer for the data
-    uint8_t *data = new uint8_t[data_len];
+    if (data_len > BLUETOOTH_PROXY_MAX_GATT_DATA) {
+      ESP_LOGW(TAG, "Rejecting oversized GATT read: len=%u max=%u", data_len,
+               BLUETOOTH_PROXY_MAX_GATT_DATA);
+      send_gatt_error(api_conn, conn->address, attr->handle, BLE_HS_EMSGSIZE);
+      return 0;
+    }
+
+    std::array<uint8_t, BLUETOOTH_PROXY_MAX_GATT_DATA> data{};
 
     // Copy data from mbuf chain
-    int rc = os_mbuf_copydata(attr->om, 0, data_len, data);
+    int rc = os_mbuf_copydata(attr->om, 0, data_len, data.data());
     if (rc != 0) {
       ESP_LOGE(TAG, "Failed to copy data from mbuf; rc=%d", rc);
-      delete[] data;
       send_gatt_error(api_conn, conn->address, attr->handle, rc);
       return 0;
     }
@@ -1699,10 +1705,7 @@ int NimBLEProxy::on_read_cb_(uint16_t conn_handle, const struct ble_gatt_error *
              conn_handle, attr->handle, data_len);
 
     // Send read response
-    send_gatt_read_response(api_conn, conn->address, attr->handle, data, data_len);
-
-    // Clean up
-    delete[] data;
+    send_gatt_read_response(api_conn, conn->address, attr->handle, data.data(), data_len);
   } else {
     ESP_LOGW(TAG, "Read completed but no data available");
     send_gatt_read_response(api_conn, conn->address, attr ? attr->handle : 0, nullptr, 0);
