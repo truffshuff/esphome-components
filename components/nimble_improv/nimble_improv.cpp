@@ -282,8 +282,8 @@ void NimBLEImprov::loop() {
 void NimBLEImprov::dump_config() {
   ESP_LOGI(TAG, "[DIAG] NimBLEImprov::dump_config() ENTRY");
   ESP_LOGCONFIG(TAG, "NimBLE Improv:");
-  ESP_LOGCONFIG(TAG, "  Authorized Duration: %u ms", this->authorized_duration_);
-  ESP_LOGCONFIG(TAG, "  WiFi Timeout: %u ms", this->wifi_timeout_);
+  ESP_LOGCONFIG(TAG, "  Authorized Duration: %lu ms", this->authorized_duration_);
+  ESP_LOGCONFIG(TAG, "  WiFi Timeout: %lu ms", this->wifi_timeout_);
   ESP_LOGI(TAG, "[DIAG] NimBLEImprov::dump_config() DONE");
 }
 
