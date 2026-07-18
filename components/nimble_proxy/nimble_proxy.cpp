@@ -637,7 +637,7 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%lu forwarded=%lu send_failed=%lu dropped_full=%lu dropped_disabled=%lu dropped_no_api=%lu dropped_api_events=%lu dup_seen=%lu dup_dropped=%lu dup_cache=%lu send_ms=%lu batch=%lu buffered=%lu",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%lu forwarded=%lu send_failed=%lu dropped_full=%lu dropped_disabled=%lu dropped_no_api=%lu dropped_api_events=%lu dup_seen=%lu dup_dropped=%lu dup_cache=%d send_ms=%d batch=%d buffered=%d",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
              this->discovered_count_, this->forwarded_count_, this->send_failed_count_,
              this->dropped_buffer_full_count_,
@@ -2305,7 +2305,7 @@ void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%ld len=%ld response=%ld",
+  ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%ld len=%d response=%d",
            msg.address, msg.handle, msg.data_len, msg.response);
 
   // Find the connection
@@ -2444,7 +2444,7 @@ void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%ld len=%ld",
+  ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%ld len=%d",
            msg.address, msg.handle, msg.data_len);
 
   // Find the connection
@@ -2535,7 +2535,7 @@ void NimBLEProxy::bluetooth_gatt_send_services(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_notify: address=%012llX handle=%ld enable=%ld",
+  ESP_LOGI(TAG, "bluetooth_gatt_notify: address=%012llX handle=%ld enable=%d",
            msg.address, msg.handle, msg.enable);
 
   // Find the connection
