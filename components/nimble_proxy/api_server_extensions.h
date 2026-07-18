@@ -43,7 +43,7 @@ inline void send_scanner_state_to_client(
     return;
   }
 
-  ESP_LOGD("nimble_proxy", "Sending scanner state (state=%d, mode=%d) to API client",
+  ESP_LOGD("nimble_proxy", "Sending scanner state (state=%ld, mode=%ld) to API client",
            resp.state, resp.mode);
 
   // Cast void* back to APIConnection*

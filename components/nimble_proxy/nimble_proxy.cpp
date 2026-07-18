@@ -637,7 +637,7 @@ void NimBLEProxy::loop() {
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
     ESP_LOGI(TAG,
-             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%u forwarded=%u send_failed=%u dropped_full=%u dropped_disabled=%u dropped_no_api=%u dropped_api_events=%u dup_seen=%u dup_dropped=%u dup_cache=%u send_ms=%u batch=%u buffered=%u",
+             "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%lu forwarded=%lu send_failed=%lu dropped_full=%lu dropped_disabled=%lu dropped_no_api=%lu dropped_api_events=%lu dup_seen=%lu dup_dropped=%lu dup_cache=%lu send_ms=%lu batch=%lu buffered=%lu",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),
              this->discovered_count_, this->forwarded_count_, this->send_failed_count_,
              this->dropped_buffer_full_count_,
@@ -888,7 +888,7 @@ void NimBLEProxy::subscribe_api_connection(void *conn, uint32_t flags) {
     this->api_connection_ = conn;
   }
 
-  ESP_LOGI(TAG, "API connection %p subscribed (flags=0x%x)", conn, flags);
+  ESP_LOGI(TAG, "API connection %p subscribed (flags=0x%lx)", conn, flags);
 
   // Clear any stale buffered payloads captured before API subscription.
   {
@@ -2110,7 +2110,7 @@ void NimBLEProxy::send_pairing_response_(uint64_t address, bool paired, int erro
 #ifdef USE_API
 template<typename T>
 void NimBLEProxy::bluetooth_device_request(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_device_request: address=%012llX type=%d",
+  ESP_LOGI(TAG, "bluetooth_device_request: address=%012llX type=%ld",
            msg.address, msg.request_type);
 
   switch (msg.request_type) {
@@ -2240,7 +2240,7 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
       break;
 
     default:
-      ESP_LOGW(TAG, "Unknown device request type: %d", msg.request_type);
+      ESP_LOGW(TAG, "Unknown device request type: %ld", msg.request_type);
       break;
   }
 }
@@ -2248,7 +2248,7 @@ void NimBLEProxy::bluetooth_device_request(const T &msg) {
 // GATT operation implementations (Phase 2.3)
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_read: address=%012llX handle=%d",
+  ESP_LOGI(TAG, "bluetooth_gatt_read: address=%012llX handle=%ld",
            msg.address, msg.handle);
 
   // Find the connection
@@ -2305,7 +2305,7 @@ void NimBLEProxy::bluetooth_gatt_read(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%d len=%d response=%d",
+  ESP_LOGI(TAG, "bluetooth_gatt_write: address=%012llX handle=%ld len=%ld response=%ld",
            msg.address, msg.handle, msg.data_len, msg.response);
 
   // Find the connection
@@ -2387,7 +2387,7 @@ void NimBLEProxy::bluetooth_gatt_write(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_read_descriptor: address=%012llX handle=%d",
+  ESP_LOGI(TAG, "bluetooth_gatt_read_descriptor: address=%012llX handle=%ld",
            msg.address, msg.handle);
 
   // Find the connection
@@ -2444,7 +2444,7 @@ void NimBLEProxy::bluetooth_gatt_read_descriptor(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_write_descriptor(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%d len=%d",
+  ESP_LOGI(TAG, "bluetooth_gatt_write_descriptor: address=%012llX handle=%ld len=%ld",
            msg.address, msg.handle, msg.data_len);
 
   // Find the connection
@@ -2535,7 +2535,7 @@ void NimBLEProxy::bluetooth_gatt_send_services(const T &msg) {
 
 template<typename T>
 void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_gatt_notify: address=%012llX handle=%d enable=%d",
+  ESP_LOGI(TAG, "bluetooth_gatt_notify: address=%012llX handle=%ld enable=%ld",
            msg.address, msg.handle, msg.enable);
 
   // Find the connection
@@ -2575,7 +2575,7 @@ void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
   // Find the CCCD handle for this characteristic
   uint16_t cccd_handle = this->find_cccd_handle_(conn, msg.handle);
   if (cccd_handle == 0) {
-    ESP_LOGE(TAG, "CCCD not found for characteristic handle %d", msg.handle);
+    ESP_LOGE(TAG, "CCCD not found for characteristic handle %ld", msg.handle);
 #ifdef USE_API
     void *api_conn = nullptr;
     {
@@ -2603,7 +2603,7 @@ void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
     cccd_value[1] = 0x00;
   }
 
-  ESP_LOGI(TAG, "Writing CCCD handle %d with value 0x%02X%02X for characteristic %d",
+  ESP_LOGI(TAG, "Writing CCCD handle %d with value 0x%02X%02X for characteristic %ld",
            cccd_handle, cccd_value[1], cccd_value[0], msg.handle);
 
   // Write to CCCD descriptor to enable/disable notifications
@@ -2632,13 +2632,13 @@ void NimBLEProxy::bluetooth_gatt_notify(const T &msg) {
     conn->subscribed_handles.erase(msg.handle);
   }
 
-  ESP_LOGI(TAG, "Notification %s for handle %d (total subscriptions: %d)",
+  ESP_LOGI(TAG, "Notification %s for handle %ld (total subscriptions: %zu)",
            msg.enable ? "enabled" : "disabled", msg.handle, conn->subscribed_handles.size());
 }
 
 template<typename T>
 void NimBLEProxy::bluetooth_set_connection_params(const T &msg) {
-  ESP_LOGI(TAG, "bluetooth_set_connection_params: address=%012llX min=%d max=%d latency=%d timeout=%d",
+  ESP_LOGI(TAG, "bluetooth_set_connection_params: address=%012llX min=%ld max=%ld latency=%ld timeout=%ld",
            msg.address, msg.min_interval, msg.max_interval, msg.latency, msg.timeout);
 
   // Find existing connection
