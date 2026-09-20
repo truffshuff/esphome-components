@@ -114,6 +114,25 @@ async def to_code(config):
     )
     cg.add_build_flag("-DBLUETOOTH_PROXY_MAX_CONNECTIONS=%d" % config[CONF_CONNECTION_SLOTS])
 
+    # ESPHome 2026.9.0 (esphome#18281) moved the Bluetooth *connection* protobuf
+    # messages behind their own define. In api_pb2.h, BluetoothDeviceRequest,
+    # BluetoothGATTReadResponse, BluetoothGATTErrorResponse,
+    # BluetoothGATTGetServicesResponse/Done, BluetoothGATTNotifyDataResponse and
+    # BluetoothConnectionsFreeResponse are all inside
+    #   #ifdef USE_BLUETOOTH_PROXY_CONNECTIONS
+    # while only BluetoothScannerStateResponse and the advertisement messages
+    # remain under plain USE_BLUETOOTH_PROXY (which the bluetooth_proxy stub in
+    # this repo defines).
+    #
+    # api_server_extensions.h and nimble_proxy.cpp use the connection types
+    # unconditionally, so without this define the build fails on unknown types
+    # in the api:: namespace.
+    #
+    # Unconditional here because connection_slots is validated to 1..9 and
+    # defaults to 3, so this component always compiles GATT connection support.
+    # Upstream gates the same define on "connections > 0".
+    cg.add_define("USE_BLUETOOTH_PROXY_CONNECTIONS")
+
     var = cg.new_Pvariable(config[CONF_ID])
     # Register as runtime Component so setup()/loop() run for advertisement batching,
     # diagnostics counters, and scanner state updates.
