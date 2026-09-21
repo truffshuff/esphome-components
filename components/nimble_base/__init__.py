@@ -40,6 +40,30 @@ async def to_code(config):
     if hasattr(esp32, "request_bluetooth"):
         esp32.request_bluetooth()
 
+    # WiFi/BT software coexistence. The ESP32-S3 has ONE 2.4 GHz radio shared
+    # between WiFi and BLE; without arbitration they collide and WiFi
+    # *reception* collapses while transmission still looks fine.
+    #
+    # ESP-IDF's ESP_COEX_SW_COEXIST_ENABLE is "default y" whenever WiFi and BT
+    # are both enabled, so this used to come for free. ESPHome 2026.7.0
+    # (esphome#17008) added a reconciler that decides it explicitly:
+    #
+    #     if net.software_coexistence:
+    #         set_idf_sdkconfig_default("CONFIG_SW_COEXIST_ENABLE", True)
+    #     else:
+    #         set_idf_sdkconfig_default("CONFIG_SW_COEXIST_ENABLE", False)
+    #
+    # Only esp32_ble_tracker calls request_software_coexistence(), so a NimBLE
+    # build silently landed on False from 2026.7.0 onward.
+    #
+    # Observed on an ESP32-S3 at -48 dBm with noise -96 and AP-reported
+    # satisfaction 100: 26,195 packets transmitted against 330 received,
+    # rx_rate oscillating between the 6 Mbps basic-rate floor and 39 Mbps,
+    # OTA downloads starving to ~0.6 kB/s or timing out in the handshake, and
+    # repeated getaddrinfo EAI_FAIL on inbound DNS responses.
+    if hasattr(esp32, "request_software_coexistence"):
+        esp32.request_software_coexistence()
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
