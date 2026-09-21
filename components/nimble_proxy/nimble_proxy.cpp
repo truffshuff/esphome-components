@@ -636,6 +636,39 @@ void NimBLEProxy::loop() {
   uint32_t now = millis();
   if ((now - this->last_diag_log_ms_) >= 10000) {
     bool has_api_conn = (this->api_connection_ != nullptr);
+
+    // Skip the line when nothing has moved. With the scanner disabled - during
+    // an OTA, or whenever Home Assistant asks for scanner mode "disabled" - no
+    // counter can change, and this used to emit an identical INFO line every
+    // 10s indefinitely. That buries real events and costs UART time on every
+    // pass. State flags are included so enable/disable transitions still log.
+    const uint8_t flags = (this->scanner_enabled_ ? 0x1 : 0) | (this->scanning_ ? 0x2 : 0) |
+                          (has_api_conn ? 0x4 : 0);
+    const bool changed =
+        flags != this->diag_last_flags_ || this->discovered_count_ != this->diag_last_discovered_ ||
+        this->forwarded_count_ != this->diag_last_forwarded_ ||
+        this->send_failed_count_ != this->diag_last_send_failed_ ||
+        this->dropped_buffer_full_count_ != this->diag_last_dropped_full_ ||
+        this->dropped_scanner_disabled_count_ != this->diag_last_dropped_disabled_ ||
+        this->dropped_no_api_count_ != this->diag_last_dropped_no_api_ ||
+        this->dropped_api_event_count_ != this->diag_last_dropped_api_events_ ||
+        this->duplicate_seen_count_ != this->diag_last_dup_seen_ ||
+        this->duplicate_dropped_count_ != this->diag_last_dup_dropped_;
+    if (!changed) {
+      this->last_diag_log_ms_ = now;
+      return;
+    }
+    this->diag_last_flags_ = flags;
+    this->diag_last_discovered_ = this->discovered_count_;
+    this->diag_last_forwarded_ = this->forwarded_count_;
+    this->diag_last_send_failed_ = this->send_failed_count_;
+    this->diag_last_dropped_full_ = this->dropped_buffer_full_count_;
+    this->diag_last_dropped_disabled_ = this->dropped_scanner_disabled_count_;
+    this->diag_last_dropped_no_api_ = this->dropped_no_api_count_;
+    this->diag_last_dropped_api_events_ = this->dropped_api_event_count_;
+    this->diag_last_dup_seen_ = this->duplicate_seen_count_;
+    this->diag_last_dup_dropped_ = this->duplicate_dropped_count_;
+
     ESP_LOGI(TAG,
              "Diag counters: scanner_enabled=%s scanning=%s api=%s discovered=%lu forwarded=%lu send_failed=%lu dropped_full=%lu dropped_disabled=%lu dropped_no_api=%lu dropped_api_events=%lu dup_seen=%lu dup_dropped=%lu dup_cache=%d send_ms=%d batch=%d buffered=%d",
              YESNO(this->scanner_enabled_), YESNO(this->scanning_), YESNO(has_api_conn),

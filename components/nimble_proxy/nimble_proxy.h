@@ -267,6 +267,20 @@ class NimBLEProxy : public Component {
   volatile uint32_t duplicate_seen_count_{0};
   volatile uint32_t duplicate_dropped_count_{0};
   uint32_t last_diag_log_ms_{0};
+  // Snapshot of the last diag line actually emitted, so an idle proxy does not
+  // repeat an identical INFO line every 10s forever. Only the mutable counters
+  // and state flags are tracked; the config values in the message cannot change
+  // at runtime.
+  uint32_t diag_last_discovered_{0};
+  uint32_t diag_last_forwarded_{0};
+  uint32_t diag_last_send_failed_{0};
+  uint32_t diag_last_dropped_full_{0};
+  uint32_t diag_last_dropped_disabled_{0};
+  uint32_t diag_last_dropped_no_api_{0};
+  uint32_t diag_last_dropped_api_events_{0};
+  uint32_t diag_last_dup_seen_{0};
+  uint32_t diag_last_dup_dropped_{0};
+  uint8_t diag_last_flags_{0xFF};  // 0xFF = nothing emitted yet, so the first pass always logs
   volatile uint16_t pending_service_response_handle_{BLE_HS_CONN_HANDLE_NONE};
   volatile bool pending_service_cache_save_{false};
 
