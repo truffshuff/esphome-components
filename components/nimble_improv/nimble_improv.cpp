@@ -34,7 +34,11 @@ static bool read_lp_str_(const std::vector<uint8_t> &in, size_t &idx, std::strin
   return true;
 }
 
-static std::string to_hex_(const std::vector<uint8_t> &in) {
+// [[maybe_unused]]: the only caller is an ESP_LOGD, which the logger compiles
+// out at log levels below DEBUG (this project runs INFO), leaving the function
+// unreferenced and tripping -Wunused-function. The attribute silences that
+// without changing behaviour at any level.
+[[maybe_unused]] static std::string to_hex_(const std::vector<uint8_t> &in) {
   static const char *hex = "0123456789abcdef";
   std::string s; s.reserve(in.size() * 2);
   for (uint8_t b : in) { s.push_back(hex[b >> 4]); s.push_back(hex[b & 0xF]); }
