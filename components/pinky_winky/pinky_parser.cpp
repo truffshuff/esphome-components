@@ -63,7 +63,7 @@ cleanup:
 }
 
 void PinkyParser::setup() {
-  this->company_uuid_ = esp32_ble::ESPBTUUID::from_uint32(kCompanyID);
+  this->company_uuid_ = ble_device_base::ESPBTUUID::from_uint32(kCompanyID);
 }
 
 void PinkyParser::set_secret(const std::string &secret) {
@@ -74,7 +74,7 @@ bool PinkyParser::have_secret() {
   return !this->secret_.empty();
 }
 
-bool PinkyParser::is_pinky_uuid(const esp32_ble::ESPBTUUID uuid) {
+bool PinkyParser::is_pinky_uuid(const ble_device_base::ESPBTUUID uuid) {
   return uuid == this->company_uuid_;
 }
 

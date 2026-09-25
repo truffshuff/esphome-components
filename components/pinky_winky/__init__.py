@@ -2,7 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.automation import maybe_simple_id
-from esphome.components import esp32_ble_tracker
+from esphome.components import ble_device_base
 from esphome.components import time
 from esphome.const import (
     CONF_ID,
@@ -12,7 +12,10 @@ from esphome.const import (
 
 
 CODEOWNERS = ["@buglloc"]
-DEPENDENCIES = ["esp32_ble_tracker"]
+DEPENDENCIES = ["esp32"]
+# Binds through the neutral BLE hub (esp32_ble_tracker on Bluedroid builds,
+# nimble_tracker on NimBLE builds).
+AUTO_LOAD = ["ble_device_base"]
 MULTI_CONF = True
 
 CONF_SECRET = "secret"
@@ -20,7 +23,7 @@ CONF_MAX_TS_DRIFT = "max_ts_drift"
 
 pinky_winky_ns = cg.esphome_ns.namespace("pinky_winky")
 PinkyWinky = pinky_winky_ns.class_(
-    "PinkyWinky", esp32_ble_tracker.ESPBTDeviceListener, cg.Component
+    "PinkyWinky", ble_device_base.ESPBTDeviceListener, cg.Component
 )
 
 CONFIG_SCHEMA = (
@@ -37,7 +40,7 @@ CONFIG_SCHEMA = (
             ),
         }
     )
-    .extend(esp32_ble_tracker.ESP_BLE_DEVICE_SCHEMA)
+    .extend(ble_device_base.BLE_DEVICE_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA)
 )
 
@@ -45,7 +48,7 @@ CONFIG_SCHEMA = (
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    await esp32_ble_tracker.register_ble_device(var, config)
+    await ble_device_base.register_ble_device(var, config)
 
     time_ = await cg.get_variable(config[CONF_TIME_ID])
     cg.add(var.set_time(time_))
@@ -65,7 +68,7 @@ ACTION_SCHEMA = maybe_simple_id(
 )
 
 @automation.register_action(
-    "pinky_winky.reset", PinkyWinkyResetAction, ACTION_SCHEMA
+    "pinky_winky.reset", PinkyWinkyResetAction, ACTION_SCHEMA, synchronous=True
 )
 async def pinky_winky_reset_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)

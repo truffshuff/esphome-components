@@ -53,9 +53,13 @@ void PinkyWinky::reset() {
   ESP_LOGE(TAG, "unable to get lock");
 }
 
-bool PinkyWinky::parse_device(const esp32_ble_tracker::ESPBTDevice &device) {
+bool PinkyWinky::parse_device(const ble_device_base::ESPBTDevice &device) {
   if (device.address_uint64() != this->address_) {
-    ESP_LOGVV(TAG, "parse_device: unknown MAC address (%s): %s", device.get_name().c_str(), device.address_str().c_str());
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+    char addr_buf[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+    ESP_LOGVV(TAG, "parse_device: unknown MAC address (%s): %s", device.get_name().c_str(),
+              device.address_str_to(addr_buf));
+#endif
     return false;
   }
 
@@ -66,7 +70,8 @@ bool PinkyWinky::parse_device(const esp32_ble_tracker::ESPBTDevice &device) {
   bool ok = false;
   for (auto &it : device.get_manufacturer_datas()) {
     if (!this->parser_.is_pinky_uuid(it.uuid)) {
-      ESP_LOGW(TAG, "parse_device: invalid uuid: %s", it.uuid.to_string().c_str());
+      char uuid_buf[ble_device_base::UUID_STR_LEN];
+      ESP_LOGW(TAG, "parse_device: invalid uuid: %s", it.uuid.to_str(uuid_buf));
       continue;
     }
 

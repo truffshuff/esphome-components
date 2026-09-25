@@ -1,43 +1,46 @@
-# Example: NimBLE Improv WiFi Provisioning Only
-# This example shows how to use nimble_improv WITHOUT nimble_proxy
-# Users can provision WiFi credentials via BLE using the Improv protocol
+# Improv WiFi provisioning over NimBLE (esp32_improv equivalent).
+#
+# The Improv service runs while WiFi needs provisioning (no stored network, or
+# no connection for wifi_timeout) and stops once the device is provisioned.
 
 esphome:
-  name: improv-only
-  friendly_name: "Improv Only Device"
+  name: nimble-improv
+  min_version: 2026.9.0
 
 esp32:
-  board: esp32dev
+  board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
 
-# Enable logging
 logger:
 
-# NimBLE Base - Required for all NimBLE components
+# No network: the device waits for Improv provisioning. ESPHome's wifi schema
+# only accepts a network-less config for esp32_improv / improv_serial, so a
+# fallback hotspot is declared (it is also a second way in).
+wifi:
+  ap:
+    ssid: "nimble-improv setup"
+
+external_components:
+  - source: github://truffshuff/esphome-components
+    components: [nimble_base, nimble_improv]
+
 nimble_base:
 
-# WiFi configuration (can be changed via BLE Improv)
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+binary_sensor:
+  - platform: gpio
+    id: provision_button
+    pin:
+      number: GPIO0
+      inverted: true
 
-  # Enable fallback hotspot in case wifi connection fails
-  ap:
-    ssid: "Improv-Only Fallback"
-    password: "12345678"
-
-# Improv WiFi Provisioning via BLE
-nimble_improv:
-  authorizer: none
-  identify_duration: 10s
-  wifi_timeout: 1min
-
-# Optional: Status LED to show provisioning state
 output:
   - platform: gpio
     id: status_led
     pin: GPIO2
 
-# Note: No nimble_proxy or api component needed!
-# This device only uses BLE for WiFi provisioning
+nimble_improv:
+  authorizer: provision_button      # press the button to accept settings
+  authorized_duration: 1min
+  status_indicator: status_led      # blinks per Improv state, enables Identify
+  next_url: "http://{{ip_address}}/"

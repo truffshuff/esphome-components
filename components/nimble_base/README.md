@@ -1,168 +1,85 @@
-# NimBLE Base Component
+# nimble_base
 
-The `nimble_base` component provides core NimBLE Bluetooth Low Energy (BLE) stack initialization for ESP32 devices. This is a foundational component used by other NimBLE-based components like `nimble_proxy` and `nimble_improv`.
+The NimBLE counterpart of ESPHome's `esp32_ble`. It brings up the ESP32 BLE
+controller and the NimBLE host, applies the security-manager configuration,
+owns GATT-server service registration, and delivers the host's sync and reset
+events on the ESPHome main loop.
 
-## Purpose
-
-This component was created to separate the core NimBLE initialization from specific BLE functionality, allowing users to:
-- Use `nimble_improv` without requiring `nimble_proxy`
-- Use `nimble_proxy` without improv functionality
-- Use both components together
-- Add custom BLE services more easily
-
-## Features
-
-- NimBLE stack initialization (NVS, Bluetooth controller, host task)
-- GATT service registration mechanism for other components
-- BLE advertising UUID registration
-- Device name and MAC address utilities
-- Shared across all NimBLE-based components
+Every other NimBLE component here builds on it: `nimble_tracker`, the vendored
+`bluetooth_proxy` / `bluetooth_connection`, and `nimble_improv`.
 
 ## Configuration
 
-Add this to your ESPHome YAML configuration:
-
 ```yaml
 nimble_base:
+  # All optional; defaults shown.
+  name: <App name>          # GAP device name, max 29 chars
+  io_capability: none       # display_only | display_yes_no | keyboard_only | keyboard_display | none
+  auth_req_mode: sc_bond    # no_bond | bond | mitm | bond_mitm | sc_only | sc_bond | sc_mitm | sc_mitm_bond
+  enable_on_boot: true
+  connection_timeout: 20s   # outgoing connects (10s - 180s)
+  use_psram: false          # host allocations in PSRAM (needs psram:)
 ```
 
-That's it! The component has no configuration options - it simply initializes the NimBLE stack.
+The options follow `esp32_ble`'s names. `max_key_size` / `min_key_size` are not
+offered because NimBLE fixes them at build time.
 
-## Usage Examples
-
-### Improv WiFi Provisioning Only
+### Actions and conditions
 
 ```yaml
-# Basic configuration
-esphome:
-  name: my-device
-
-esp32:
-  board: esp32dev
-  framework:
-    type: esp-idf
-
-# NimBLE base (required)
-nimble_base:
-
-# WiFi credentials (can be changed via BLE)
-wifi:
-  ssid: "MyNetwork"
-  password: "MyPassword"
-
-# Improv provisioning
-nimble_improv:
-  authorizer: none
-  status_indicator: led
+- nimble_base.disable:     # ble.disable equivalent
+- nimble_base.enable:      # ble.enable equivalent
+- if:
+    condition: nimble_base.is_enabled
 ```
 
-### BLE Proxy Only (Home Assistant)
+Disabling first tells every component to settle (links are reported
+disconnected, scanning and advertising stop), then stops and de-initialises the
+stack. Enabling starts it again from scratch.
 
-```yaml
-# Basic configuration
-esphome:
-  name: ble-proxy
+## What it sets up for you
 
-esp32:
-  board: esp32dev
-  framework:
-    type: esp-idf
+- It requests the IDF `bt` component (ESPHome 2026.9.0 excludes it by default)
+  and, when WiFi is configured, WiFi/BT software coexistence (2026.7.0 only
+  enables it on request).
+- It supplies sdkconfig defaults. A value you set in `sdkconfig_options` always
+  wins:
+  - `CONFIG_BT_NIMBLE_ENABLED` on, `CONFIG_BT_BLUEDROID_ENABLED` off.
+  - `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`: the sum of the slots components reserve
+    (`bluetooth_proxy` connection slots, plus one for `nimble_improv`).
+    Setting it lower yourself fails validation.
+  - `CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU`: 517, the MTU Bluedroid offers.
+  - `CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL` with `use_psram: true`.
+- A full bond store evicts its oldest bond (`ble_store_util_status_rr`) instead
+  of failing new pairings.
 
-# NimBLE base (required)
-nimble_base:
-
-# WiFi
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-
-# API for Home Assistant
-api:
-  encryption:
-    key: !secret api_key
-
-# BLE Proxy
-nimble_proxy:
-  active: true
-  max_connections: 3
-```
-
-### Both Improv and Proxy
-
-```yaml
-# Basic configuration
-esphome:
-  name: full-device
-
-esp32:
-  board: esp32dev
-  framework:
-    type: esp-idf
-
-# NimBLE base (required)
-nimble_base:
-
-# WiFi
-wifi:
-  ssid: "MyNetwork"
-  password: "MyPassword"
-
-# API for Home Assistant
-api:
-  encryption:
-    key: !secret api_key
-
-# Both components
-nimble_proxy:
-  active: true
-  max_connections: 3
-
-nimble_improv:
-  authorizer: none
-```
-
-## Technical Details
-
-### Setup Priority
-
-The component runs at `setup_priority::AFTER_BLUETOOTH` (500.0), ensuring it initializes before other BLE components.
-
-### Component Dependencies
-
-- **Required by**: `nimble_proxy`, `nimble_improv`
-- **Depends on**: `esp32`
-
-### Service Registration
-
-Other components can register GATT services during their construction:
+## For component authors
 
 ```cpp
-// In your component constructor
-nimble_base::NimBLEBase::register_gatt_services(my_gatt_services);
-nimble_base::NimBLEBase::register_advertising_service_uuid(&MY_SERVICE_UUID);
+#include "esphome/components/nimble_base/nimble_base.h"
+
+class MyThing : public Component, public nimble_base::NimBLEStackListener {
+  void setup() override { nimble_base::global_nimble_base->add_listener(this); }
+  void on_nimble_synced() override { /* GAP/GATT calls are valid now */ }
+  void on_nimble_reset(int reason) override { /* links and procedures are gone */ }
+  void on_nimble_disabling() override { /* stop radio use now */ }
+};
 ```
 
-## Migration from Previous Versions
+All three callbacks run on the main loop. NimBLE's own callbacks run on its
+host task: copy what you need there (see `nimble_event_ring.h`) and act on it
+in `loop()`.
 
-If you were using `nimble_improv` before, you now need to explicitly add `nimble_base`:
+GATT services must be registered before `setup()`, typically from your
+constructor:
 
-**Old configuration:**
-```yaml
-nimble_improv:
-  # config
+```cpp
+nimble_base::NimBLEBase::register_gatt_services(my_service_table);
 ```
 
-**New configuration:**
-```yaml
-nimble_base:
+Python components reserve connection slots the way they do with `esp32_ble`:
 
-nimble_improv:
-  # config
+```python
+from esphome.components import nimble_base
+CONFIG_SCHEMA = cv.All(MY_SCHEMA, nimble_base.consume_connection_slots(1, "my_component"))
 ```
-
-The `nimble_proxy` component also now requires `nimble_base` to be declared.
-
-## See Also
-
-- [nimble_proxy](../nimble_proxy/README.md) - BLE proxy for Home Assistant
-- [nimble_improv](../nimble_improv/README.md) - WiFi provisioning via BLE

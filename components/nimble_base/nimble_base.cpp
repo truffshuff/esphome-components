@@ -1,305 +1,276 @@
 #include "nimble_base.h"
 
-// Undefine NimBLE macros that conflict with ESPHome API enums
-#ifdef LOG_LEVEL_NONE
-#undef LOG_LEVEL_NONE
-#endif
-#ifdef LOG_LEVEL_ERROR
-#undef LOG_LEVEL_ERROR
-#endif
-#ifdef LOG_LEVEL_WARN
-#undef LOG_LEVEL_WARN
-#endif
-#ifdef LOG_LEVEL_INFO
-#undef LOG_LEVEL_INFO
-#endif
-#ifdef LOG_LEVEL_DEBUG
-#undef LOG_LEVEL_DEBUG
-#endif
-#ifdef LOG_LEVEL_VERBOSE
-#undef LOG_LEVEL_VERBOSE
-#endif
-
-#include "esphome/core/log.h"
-#include "esphome/core/application.h"
-#include "esp_err.h"
-#include "esp_system.h"
-#include "esp_idf_version.h"
+#include "esp_bt.h"
 #include "esp_mac.h"
+#include "host/ble_hs.h"
+#include "host/util/util.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
 #include "nvs_flash.h"
+#include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
+#include "store/config/ble_store_config.h"
+
+// NimBLE's modlog defines LOG_LEVEL_* macros that collide with ESPHome names.
+#undef LOG_LEVEL_NONE
+#undef LOG_LEVEL_ERROR
+#undef LOG_LEVEL_WARN
+#undef LOG_LEVEL_INFO
+#undef LOG_LEVEL_DEBUG
+#undef LOG_LEVEL_VERBOSE
+
+#include "esphome/core/application.h"
+#include "esphome/core/log.h"
+
+#include <cinttypes>
 #include <cstring>
 
 extern "C" void ble_store_config_init(void);
 
-namespace esphome {
-namespace nimble_base {
+namespace esphome::nimble_base {
 
 static const char *const TAG = "nimble_base";
 
-// Static pointer for callbacks
-static NimBLEBase *global_nimble_base = nullptr;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NimBLEBase *global_nimble_base = nullptr;
 
-// Construct-on-first-use accessors to avoid Static Initialization Order Fiasco.
-// NimBLEProxy and NimBLEImprov constructors run during static init and call
-// register_*() before translation-unit-level statics may be constructed.
-// Returning a local-static reference guarantees the object is initialized on
-// the first call, regardless of TU init order.
-static std::vector<const struct ble_gatt_svc_def *> &get_additional_gatt_services_() {
-  static std::vector<const struct ble_gatt_svc_def *> v;
-  return v;
-}
-static std::vector<const ble_uuid128_t *> &get_advertising_service_uuids_() {
-  static std::vector<const ble_uuid128_t *> v;
-  return v;
-}
-static std::vector<NimBLEBase::SyncCallback> &get_sync_callbacks_() {
-  static std::vector<NimBLEBase::SyncCallback> v;
-  return v;
+// Construct-on-first-use: nimble_improv registers from its constructor, which
+// can run before this translation unit's statics are initialised.
+static std::vector<const struct ble_gatt_svc_def *> &gatt_services() {
+  static std::vector<const struct ble_gatt_svc_def *> services;
+  return services;
 }
 
-NimBLEBase::NimBLEBase() {
-  ESP_LOGI(TAG, "[DIAG] NimBLEBase::NimBLEBase() ENTRY");
-  ESP_LOGI(TAG, "[DIAG] NimBLEBase::NimBLEBase() DONE");
-}
+NimBLEBase::NimBLEBase() { global_nimble_base = this; }
 
-// Static methods for external service registration
 void NimBLEBase::register_gatt_services(const struct ble_gatt_svc_def *services) {
-  get_additional_gatt_services_().push_back(services);
-  ESP_LOGI(TAG, "Registered additional GATT services (%d total)", get_additional_gatt_services_().size());
-}
-
-std::vector<const struct ble_gatt_svc_def *> &NimBLEBase::get_additional_services() {
-  return get_additional_gatt_services_();
-}
-
-void NimBLEBase::register_advertising_service_uuid(const ble_uuid128_t *uuid) {
-  get_advertising_service_uuids_().push_back(uuid);
-  ESP_LOGI(TAG, "Registered advertising service UUID (%d total)", get_advertising_service_uuids_().size());
-}
-
-std::vector<const ble_uuid128_t *> &NimBLEBase::get_advertising_service_uuids() {
-  return get_advertising_service_uuids_();
-}
-
-void NimBLEBase::register_sync_callback(SyncCallback callback) {
-  get_sync_callbacks_().push_back(callback);
-  ESP_LOGI(TAG, "Registered sync callback (%d total)", get_sync_callbacks_().size());
+  gatt_services().push_back(services);
 }
 
 void NimBLEBase::setup() {
-  ESP_LOGI(TAG, "[DIAG] NimBLEBase::setup() ENTRY - proxy setup succeeded!");
-  ESP_LOGI(TAG, "NimBLEBase::setup() called on instance %p", this);
-  global_nimble_base = this;
-
-  ESP_LOGI(TAG, "Setting up NimBLE Base...");
-  this->setup_started_ms_ = millis();
-
-  // Ensure NVS is initialized (required by Bluetooth stack)
-  esp_err_t nvs_ret = nvs_flash_init();
-  if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_LOGW(TAG, "NVS init returned %s, erasing NVS...", esp_err_to_name(nvs_ret));
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    nvs_ret = nvs_flash_init();
+  // The Bluetooth stack keeps its bond store and PHY calibration in NVS.
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_LOGW(TAG, "NVS init returned %s, erasing", esp_err_to_name(err));
+    nvs_flash_erase();
+    err = nvs_flash_init();
   }
-  if (nvs_ret != ESP_OK) {
-    ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_ret));
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+    this->state_ = StackState::FAILED;
+    this->mark_failed();
     return;
   }
 
-  // Release Classic BT memory (ignore error if already released)
-  (void) esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+  // Classic BT is never used; give its controller memory back once.
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
-  // Configure host callbacks BEFORE nimble_port_init() to prevent a race
-  // condition: in ESP-IDF 5.5+, nimble_port_init() may start the NimBLE host
-  // task internally, which can call sync_cb before we set it.  Setting them
-  // here is safe on all IDF versions because ble_hs_init() never clears them.
+  if (!this->enable_on_boot_) {
+    this->state_ = StackState::DISABLED;
+    return;
+  }
+  if (!this->start_stack_()) {
+    // esp32_ble parity: a stack that cannot start fails the component, and
+    // every dependent reports itself failed.
+    this->mark_failed();
+  }
+}
+
+void NimBLEBase::apply_host_config_() {
+  // Must be set before the host starts: ble_hs_init() keeps these, and the
+  // sync callback can fire as soon as the host task runs.
   ble_hs_cfg.sync_cb = NimBLEBase::on_sync_;
   ble_hs_cfg.reset_cb = NimBLEBase::on_reset_;
+  // A full bond store evicts the oldest bond instead of failing every new
+  // pairing (the recycling Bluedroid does on its own).
+  ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
-  // Configure pairing before the host starts. This implementation has no
-  // trusted user-confirmation channel, so it must not claim MITM protection or
-  // silently accept numeric comparisons/default passkeys.
-  ble_hs_cfg.sm_bonding = 1;
-  ble_hs_cfg.sm_mitm = 0;
-  ble_hs_cfg.sm_sc = 1;
-  ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+  ble_hs_cfg.sm_io_cap = this->io_capability_;
+  ble_hs_cfg.sm_bonding = this->bonding_ ? 1 : 0;
+  ble_hs_cfg.sm_mitm = this->mitm_ ? 1 : 0;
+  ble_hs_cfg.sm_sc = this->secure_connections_ ? 1 : 0;
+  // Distribute encryption and identity keys both ways: the identity key is
+  // what lets a bonded peer using a resolvable private address be recognised.
   ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
   ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+}
 
-  // Initialize NimBLE port (handles controller init internally)
-  ESP_LOGV(TAG, "Calling nimble_port_init()...");
-  esp_err_t ret = nimble_port_init();
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
-    return;
+bool NimBLEBase::start_stack_() {
+  this->state_ = StackState::STARTING;
+  this->host_synced_.store(false);
+
+  this->apply_host_config_();
+
+  esp_err_t err = nimble_port_init();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
+    this->state_ = StackState::FAILED;
+    return false;
   }
 
-  // Initialize BLE store config before starting host task
-  ESP_LOGV(TAG, "Initializing BLE store config...");
-  ble_store_config_init();
-
-  // Initialize GAP/GATT services before starting host task
-  ESP_LOGV(TAG, "Initializing GAP/GATT services...");
+  if (this->started_once_) {
+    // A previous enable registered the services; the host keeps that table
+    // across a deinit, so start from an empty server before adding them again.
+    ble_gatts_reset();
+  }
   ble_svc_gap_init();
   ble_svc_gatt_init();
 
-  // Set device name
-  int rc = ble_svc_gap_device_name_set("ESPHome NimBLE");
+  const std::string &name = this->device_name_.empty() ? App.get_name() : this->device_name_;
+  int rc = ble_svc_gap_device_name_set(name.c_str());
   if (rc != 0) {
-    ESP_LOGE(TAG, "Error setting device name: %d", rc);
+    ESP_LOGW(TAG, "Setting GAP device name failed: %d", rc);
   }
 
-  // Register any additional GATT services (e.g., from nimble_improv)
-  auto &additional_gatt_services = get_additional_gatt_services_();
-  if (!additional_gatt_services.empty()) {
-    ESP_LOGI(TAG, "Registering %d additional GATT service(s)", additional_gatt_services.size());
-    for (const auto *services : additional_gatt_services) {
-      rc = ble_gatts_count_cfg(services);
-      if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_count_cfg failed for additional service: %d", rc);
-        continue;
-      }
-
+  for (const auto *services : gatt_services()) {
+    rc = ble_gatts_count_cfg(services);
+    if (rc == 0)
       rc = ble_gatts_add_svcs(services);
-      if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_add_svcs failed for additional service: %d", rc);
-      } else {
-        ESP_LOGI(TAG, "Successfully registered additional GATT service");
-      }
+    if (rc != 0) {
+      ESP_LOGE(TAG, "GATT service registration failed: %d", rc);
     }
   }
 
-  // Start NimBLE host task (only once).
-  // In ESP-IDF >= 5.5.0, nimble_port_init() launches the host task internally;
-  // calling nimble_port_freertos_init() again would create a duplicate task.
-  if (!this->host_task_started_) {
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
-    ESP_LOGV(TAG, "Starting NimBLE host task via nimble_port_freertos_init...");
-    nimble_port_freertos_init(NimBLEBase::host_task_);
-    this->expects_internal_host_task_ = false;
-    this->host_task_started_ = true;
-#else
-    this->expects_internal_host_task_ = true;
-    ESP_LOGV(TAG, "NimBLE host task managed internally by nimble_port_init (ESP-IDF >= 5.5.0)");
-#endif
-  }
+  ble_store_config_init();
 
-  ESP_LOGI(TAG, "NimBLE Base setup complete");
+  // nimble_port_init() does not start the host task on any IDF version; the
+  // host only runs (and only syncs) once this is called.
+  nimble_port_freertos_init(NimBLEBase::host_task_);
+  this->started_once_ = true;
+  ESP_LOGD(TAG, "NimBLE host started, waiting for sync");
+  return true;
+}
+
+void NimBLEBase::stop_stack_() {
+  // Blocks until the host has stopped: every connection is terminated and
+  // every procedure failed first (ble_hs_stop).
+  int rc = nimble_port_stop();
+  if (rc != 0) {
+    ESP_LOGW(TAG, "nimble_port_stop failed: %d", rc);
+  }
+  // The host task deletes itself once nimble_port_run() returns (host_task_).
+  esp_err_t err = nimble_port_deinit();
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "nimble_port_deinit failed: %s", esp_err_to_name(err));
+  }
+  this->host_synced_.store(false);
+}
+
+void NimBLEBase::enable() {
+  if (this->state_ != StackState::DISABLED)
+    return;
+  ESP_LOGD(TAG, "Enabling BLE");
+  if (!this->start_stack_()) {
+    ESP_LOGE(TAG, "BLE enable failed");
+  }
+}
+
+void NimBLEBase::disable() {
+  if (this->state_ != StackState::ACTIVE && this->state_ != StackState::STARTING)
+    return;
+  ESP_LOGD(TAG, "Disabling BLE");
+  // Listeners settle first: they must not wait for completions the stopped
+  // stack will never deliver.
+  for (auto *listener : this->listeners_) {
+    listener->on_nimble_disabling();
+  }
+  this->stop_stack_();
+  this->state_ = StackState::DISABLED;
 }
 
 void NimBLEBase::loop() {
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-  if (this->initialized_) {
-    return;
+  // Host-task callbacks only set these; listeners run here, on the main loop.
+  uint32_t resets = this->reset_count_.load();
+  if (resets != this->reset_count_seen_) {
+    this->reset_count_seen_ = resets;
+    int reason = this->last_reset_reason_.load();
+    if (this->state_ == StackState::ACTIVE)
+      this->state_ = StackState::STARTING;
+    ESP_LOGW(TAG, "NimBLE host reset, reason=%d", reason);
+    for (auto *listener : this->listeners_) {
+      listener->on_nimble_reset(reason);
+    }
   }
 
-  if (!this->expects_internal_host_task_) {
-    return;
+  bool synced = this->host_synced_.load();
+  if (synced && this->state_ == StackState::STARTING) {
+    this->state_ = StackState::ACTIVE;
+    ESP_LOGD(TAG, "NimBLE host synced");
+    for (auto *listener : this->listeners_) {
+      listener->on_nimble_synced();
+    }
+  } else if (!synced && this->state_ == StackState::ACTIVE) {
+    this->state_ = StackState::STARTING;
   }
-
-  if (this->fallback_host_task_started_) {
-    return;
-  }
-
-  // If sync never arrives after boot, try starting the host task manually once.
-  if ((millis() - this->setup_started_ms_) < 15000) {
-    return;
-  }
-
-  ESP_LOGW(TAG, "NimBLE sync timeout waiting for internal host task; starting manual host task fallback");
-  nimble_port_freertos_init(NimBLEBase::host_task_);
-  this->host_task_started_ = true;
-  this->fallback_host_task_started_ = true;
-#endif
 }
 
 void NimBLEBase::on_sync_() {
-  ESP_LOGI(TAG, "NimBLE host synced");
-
-  if (global_nimble_base != nullptr) {
-    global_nimble_base->initialized_ = true;
+  if (global_nimble_base == nullptr)
+    return;
+  // Make sure a usable identity address exists before anyone scans or connects.
+  int rc = ble_hs_util_ensure_addr(0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "No usable BLE identity address: %d", rc);
+    return;
   }
-
-  // Call all registered sync callbacks
-  for (auto callback : get_sync_callbacks_()) {
-    if (callback != nullptr) {
-      callback();
-    }
-  }
+  global_nimble_base->host_synced_.store(true);
 }
 
 void NimBLEBase::on_reset_(int reason) {
-  ESP_LOGW(TAG, "NimBLE host reset; reason=%d", reason);
+  if (global_nimble_base == nullptr)
+    return;
+  global_nimble_base->host_synced_.store(false);
+  global_nimble_base->last_reset_reason_.store(reason);
+  global_nimble_base->reset_count_.fetch_add(1);
 }
 
-// FreeRTOS task trampoline for NimBLE host
 void NimBLEBase::host_task_(void *param) {
-  (void) param;
+  // Returns only after nimble_port_stop().
   nimble_port_run();
   nimble_port_freertos_deinit();
 }
 
-std::string NimBLEBase::get_device_name_with_mac(const std::string &base_name, bool short_form) {
-  char device_name[32];
-
-  // Get last 3 bytes (6 hex chars) of WiFi MAC address
-  uint8_t addr[6];
-  int rc_addr = esp_read_mac(addr, ESP_MAC_WIFI_STA);
-
-  if (short_form && rc_addr == 0) {
-    // Use minimal name with MAC: "h-ABC123" (8 chars max)
-    // Extract first char from device name
-    std::string short_name = base_name;
-    size_t dash_pos = short_name.find('-');
-    if (dash_pos != std::string::npos) {
-      short_name = short_name.substr(0, dash_pos);  // Keep only base part
-    }
-    // Use first char + hyphen + MAC (1+1+6 = 8 chars)
-    snprintf(device_name, sizeof(device_name), "%c-%02X%02X%02X",
-             short_name[0], addr[3], addr[4], addr[5]);
-  } else if (rc_addr == 0) {
-    // Use full name with MAC
-    snprintf(device_name, sizeof(device_name), "%s-%02X%02X%02X",
-             base_name.c_str(), addr[3], addr[4], addr[5]);
-  } else {
-    // Fallback if MAC address not available
-    snprintf(device_name, sizeof(device_name), "%s", base_name.c_str());
+void NimBLEBase::get_mac_msb_first(uint8_t out[MAC_ADDRESS_SIZE]) const {
+  // esp_read_mac yields the controller's public address in printable order and,
+  // unlike the host's identity copy, is valid before the host has synced.
+  if (esp_read_mac(out, ESP_MAC_BT) != ESP_OK) {
+    memset(out, 0, MAC_ADDRESS_SIZE);
   }
-
-  return std::string(device_name);
 }
 
-std::string NimBLEBase::get_mac_address_pretty() {
-  // Get the public device address from NimBLE
-  uint8_t addr_type;
-  ble_addr_t addr;
-  int rc = ble_hs_id_infer_auto(0, &addr_type);
-  if (rc != 0) {
-    ESP_LOGW(TAG, "Failed to determine BLE address type: %d", rc);
-    return "00:00:00:00:00:00";
+// [[maybe_unused]]: only ESP_LOGCONFIG uses it, which the logger compiles out below CONFIG level.
+[[maybe_unused]] static const char *state_to_string(StackState state) {
+  switch (state) {
+    case StackState::OFF:
+      return "OFF";
+    case StackState::STARTING:
+      return "STARTING";
+    case StackState::ACTIVE:
+      return "ACTIVE";
+    case StackState::DISABLED:
+      return "DISABLED";
+    case StackState::FAILED:
+      return "FAILED";
   }
-
-  rc = ble_hs_id_copy_addr(addr_type, addr.val, NULL);
-  if (rc != 0) {
-    ESP_LOGW(TAG, "Failed to copy BLE address: %d", rc);
-    return "00:00:00:00:00:00";
-  }
-
-  // Format as MAC address string (reversed byte order for display)
-  char mac_str[18];
-  snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-           addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0]);
-  return std::string(mac_str);
+  return "UNKNOWN";
 }
 
 void NimBLEBase::dump_config() {
-  ESP_LOGCONFIG(TAG, "NimBLE Base:");
-  ESP_LOGCONFIG(TAG, "  Initialized: %s", YESNO(this->initialized_));
-  ESP_LOGCONFIG(TAG, "  Host task started: %s", YESNO(this->host_task_started_));
-  ESP_LOGCONFIG(TAG, "  Registered GATT services: %d", get_additional_gatt_services_().size());
-  ESP_LOGCONFIG(TAG, "  Registered advertising UUIDs: %d", get_advertising_service_uuids_().size());
-  // NOTE: esp_bt_controller_get_status() omitted - may fault before BT init
+  uint8_t mac[MAC_ADDRESS_SIZE];
+  this->get_mac_msb_first(mac);
+  char mac_str[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+  format_mac_addr_upper(mac, mac_str);
+  ESP_LOGCONFIG(TAG,
+                "NimBLE:\n"
+                "  State: %s\n"
+                "  MAC: %s\n"
+                "  IO capability: %u\n"
+                "  Bonding: %s, MITM: %s, Secure connections: %s\n"
+                "  Connection timeout: %" PRIu32 " ms\n"
+                "  GATT service sets: %u",
+                state_to_string(this->state_), mac_str, this->io_capability_, YESNO(this->bonding_),
+                YESNO(this->mitm_), YESNO(this->secure_connections_), this->connection_timeout_ms_,
+                static_cast<unsigned>(gatt_services().size()));
 }
 
-}  // namespace nimble_base
-}  // namespace esphome
+}  // namespace esphome::nimble_base

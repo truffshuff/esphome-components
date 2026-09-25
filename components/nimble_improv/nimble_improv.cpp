@@ -1,737 +1,786 @@
 #include "nimble_improv.h"
-#include "esphome/core/log.h"
-#include "esphome/core/application.h"
-#include "esphome/components/wifi/wifi_component.h"
-#include "esphome/components/nimble_base/nimble_base.h"
-#include <algorithm>
-#include <cstring>
-#include <span>
+
+#include "host/ble_gap.h"
+#include "host/ble_gatt.h"
+#include "host/ble_hs.h"
+#include "host/ble_hs_adv.h"
+#include "host/ble_hs_mbuf.h"
+#include "host/ble_uuid.h"
+#include "services/gap/ble_svc_gap.h"
+
 #include "esp_chip_info.h"
+#include "sdkconfig.h"
 
-// Unique key for NVS storage (any non-zero 32-bit value)
-static constexpr uint32_t PREF_ID_WIFI = 0x9B5A7C21;
+// NimBLE's modlog defines LOG_LEVEL_* macros that collide with ESPHome names.
+#undef LOG_LEVEL_NONE
+#undef LOG_LEVEL_ERROR
+#undef LOG_LEVEL_WARN
+#undef LOG_LEVEL_INFO
+#undef LOG_LEVEL_DEBUG
+#undef LOG_LEVEL_VERBOSE
 
-namespace esphome {
-namespace nimble_improv {
+#include "esphome/core/application.h"
+#include "esphome/core/log.h"
+
+#ifdef USE_PROVISIONING
+#include "esphome/components/provisioning/provisioning.h"
+#endif
+
+#include <algorithm>
+#include <cinttypes>
+#include <cstring>
+#include <string>
+
+namespace esphome::nimble_improv {
 
 static const char *const TAG = "nimble_improv";
 
-// Global instance pointer for NimBLE callbacks
-static NimBLEImprov *global_nimble_improv = nullptr;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NimBLEImprov *global_nimble_improv = nullptr;
 
-// If ERROR_INVALID_SSID isn't defined in your error enum, map it to INVALID_RPC
-#ifndef ERROR_INVALID_SSID
-#define ERROR_INVALID_SSID ERROR_INVALID_RPC
-#endif
+// esp32_improv constants (ESPHome 2026.9.0).
+static constexpr char ESPHOME_MY_LINK[] = "https://my.home-assistant.io/redirect/config_flow_start?domain=esphome";
+static constexpr size_t RPC_RESPONSE_OVERHEAD = 3;
+static constexpr size_t MAX_NEXT_URL_LEN =
+    improv::RPC_RESPONSE_MAX_SIZE - RPC_RESPONSE_OVERHEAD - 1 - sizeof(ESPHOME_MY_LINK);
+static constexpr uint32_t STOP_ADVERTISING_DELAY = 10000;
+static constexpr uint32_t NAME_ADVERTISING_INTERVAL = 60000;
+static constexpr uint32_t NAME_ADVERTISING_DURATION = 1000;
+static constexpr uint32_t WIFI_CONNECT_TIMEOUT = 30000;
+static constexpr uint8_t IMPROV_SERVICE_DATA_SIZE = 8;
+static constexpr uint8_t IMPROV_PROTOCOL_ID_1 = 0x77;
+static constexpr uint8_t IMPROV_PROTOCOL_ID_2 = 0x46;
+static constexpr size_t MAX_INCOMING_BYTES = 512;
 
-// Small helpers
-static bool read_lp_str_(const std::vector<uint8_t> &in, size_t &idx, std::string &out) {
-  if (idx >= in.size()) return false;
-  uint8_t len = in[idx++];
-  if (idx + len > in.size()) return false;
-  out.assign(reinterpret_cast<const char *>(&in[idx]), len);
-  idx += len;
-  return true;
-}
-
-// [[maybe_unused]]: the only caller is an ESP_LOGD, which the logger compiles
-// out at log levels below DEBUG (this project runs INFO), leaving the function
-// unreferenced and tripping -Wunused-function. The attribute silences that
-// without changing behaviour at any level.
-[[maybe_unused]] static std::string to_hex_(const std::vector<uint8_t> &in) {
-  static const char *hex = "0123456789abcdef";
-  std::string s; s.reserve(in.size() * 2);
-  for (uint8_t b : in) { s.push_back(hex[b >> 4]); s.push_back(hex[b & 0xF]); }
-  return s;
-}
-
-// Forward declarations for characteristic access (fix types)
-int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                      struct ble_gatt_access_ctxt *ctxt, void *arg);
-int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                           struct ble_gatt_access_ctxt *ctxt, void *arg);
-
-// Standard BLE UUIDs for Device Information Service
-static const ble_uuid16_t DEVICE_INFO_SERVICE_UUID = BLE_UUID16_INIT(0x180A);
-static const ble_uuid16_t MODEL_NUMBER_UUID = BLE_UUID16_INIT(0x2A24);
-static const ble_uuid16_t SERIAL_NUMBER_UUID = BLE_UUID16_INIT(0x2A25);
-static const ble_uuid16_t FIRMWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A26);
-static const ble_uuid16_t HARDWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A27);
-static const ble_uuid16_t SOFTWARE_REVISION_UUID = BLE_UUID16_INIT(0x2A28);
-static const ble_uuid16_t MANUFACTURER_NAME_UUID = BLE_UUID16_INIT(0x2A29);
-
-// GATT service definitions (Device Info + Improv) with correct flags
-static const struct ble_gatt_svc_def improv_gatt_svcs[] = {
-    {
-        // Device Information Service
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &DEVICE_INFO_SERVICE_UUID.u,
-        .characteristics = (struct ble_gatt_chr_def[]) {
-            {
-                .uuid = &MANUFACTURER_NAME_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = &MODEL_NUMBER_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = &SERIAL_NUMBER_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = &HARDWARE_REVISION_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = &FIRMWARE_REVISION_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = &SOFTWARE_REVISION_UUID.u,
-                .access_cb = device_info_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            { 0 } // end of DIS chars
-        },
-    },
-    {
-        // Improv WiFi Service
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &IMPROV_SERVICE_UUID.u,
-        .characteristics = (struct ble_gatt_chr_def[]) {
-            {
-                // 8001 Status (read + notify)
-                .uuid = &IMPROV_STATUS_UUID.u,
-                .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-            },
-            {
-                // 8002 Error (read + notify) — add NOTIFY so CCCD exists
-                .uuid = &IMPROV_ERROR_UUID.u,
-                .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-            },
-            {
-                // 8003 RPC Command (write / write without response)
-                .uuid = &IMPROV_RPC_COMMAND_UUID.u,
-                .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-            },
-            {
-                // 8004 RPC Result (read + notify)
-                .uuid = &IMPROV_RPC_RESULT_UUID.u,
-                .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-            },
-            {
-                // 8005 Capabilities (read)
-                .uuid = &IMPROV_CAPABILITIES_UUID.u,
-                .access_cb = improv_chr_access,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            { 0 } // end of Improv chars
-        },
-    },
-    { 0 } // end of services
+// Credentials the previous nimble_improv kept in its own preference slot; moved
+// into the WiFi component's store once so an already provisioned unit keeps its
+// network (esp32_improv uses wifi::save_wifi_sta()).
+static constexpr uint32_t LEGACY_PREF_ID_WIFI = 0x9B5A7C21;
+struct LegacyStoredWiFi {
+  char ssid[33];
+  char password[65];
+  uint8_t version;
+  uint8_t pad[3];
 };
+
+// ---- GATT table (registered with nimble_base before the host starts) ----
+
+// Improv UUIDs, little-endian (00467768-6228-2272-4663-2774782680xx).
+#define IMPROV_UUID(last) \
+  BLE_UUID128_INIT((last), 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00)
+static const ble_uuid128_t IMPROV_SERVICE_UUID = IMPROV_UUID(0x00);
+static const ble_uuid128_t IMPROV_STATUS_UUID = IMPROV_UUID(0x01);
+static const ble_uuid128_t IMPROV_ERROR_UUID = IMPROV_UUID(0x02);
+static const ble_uuid128_t IMPROV_RPC_COMMAND_UUID = IMPROV_UUID(0x03);
+static const ble_uuid128_t IMPROV_RPC_RESULT_UUID = IMPROV_UUID(0x04);
+static const ble_uuid128_t IMPROV_CAPABILITIES_UUID = IMPROV_UUID(0x05);
+#undef IMPROV_UUID
+
+// Device Information Service: not in esp32_improv, kept from the previous
+// nimble_improv (read-only, harmless for Improv clients).
+static const ble_uuid16_t DIS_UUID = BLE_UUID16_INIT(0x180A);
+static const ble_uuid16_t DIS_MODEL_UUID = BLE_UUID16_INIT(0x2A24);
+static const ble_uuid16_t DIS_SERIAL_UUID = BLE_UUID16_INIT(0x2A25);
+static const ble_uuid16_t DIS_FIRMWARE_UUID = BLE_UUID16_INIT(0x2A26);
+static const ble_uuid16_t DIS_HARDWARE_UUID = BLE_UUID16_INIT(0x2A27);
+static const ble_uuid16_t DIS_SOFTWARE_UUID = BLE_UUID16_INIT(0x2A28);
+static const ble_uuid16_t DIS_MANUFACTURER_UUID = BLE_UUID16_INIT(0x2A29);
+
+enum AttrId : uintptr_t {
+  ATTR_STATUS = 1,
+  ATTR_ERROR,
+  ATTR_RPC_COMMAND,
+  ATTR_RPC_RESULT,
+  ATTR_CAPABILITIES,
+  ATTR_DIS_MODEL,
+  ATTR_DIS_SERIAL,
+  ATTR_DIS_HARDWARE,
+  ATTR_DIS_FIRMWARE,
+  ATTR_DIS_SOFTWARE,
+  ATTR_DIS_MANUFACTURER,
+};
+
+static uint16_t status_handle = 0;
+static uint16_t error_handle = 0;
+static uint16_t rpc_result_handle = 0;
+
+#define ATTR_ARG(id) reinterpret_cast<void *>(static_cast<uintptr_t>(id))
+
+static const struct ble_gatt_chr_def IMPROV_CHARACTERISTICS[] = {
+    {.uuid = &IMPROV_STATUS_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_STATUS),
+     .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+     .val_handle = &status_handle},
+    {.uuid = &IMPROV_ERROR_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_ERROR),
+     .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+     .val_handle = &error_handle},
+    {.uuid = &IMPROV_RPC_COMMAND_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_RPC_COMMAND),
+     .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP},
+    {.uuid = &IMPROV_RPC_RESULT_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_RPC_RESULT),
+     .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+     .val_handle = &rpc_result_handle},
+    {.uuid = &IMPROV_CAPABILITIES_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_CAPABILITIES),
+     .flags = BLE_GATT_CHR_F_READ},
+    {},
+};
+
+static const struct ble_gatt_chr_def DIS_CHARACTERISTICS[] = {
+    {.uuid = &DIS_MANUFACTURER_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_MANUFACTURER),
+     .flags = BLE_GATT_CHR_F_READ},
+    {.uuid = &DIS_MODEL_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_MODEL),
+     .flags = BLE_GATT_CHR_F_READ},
+    {.uuid = &DIS_SERIAL_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_SERIAL),
+     .flags = BLE_GATT_CHR_F_READ},
+    {.uuid = &DIS_HARDWARE_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_HARDWARE),
+     .flags = BLE_GATT_CHR_F_READ},
+    {.uuid = &DIS_FIRMWARE_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_FIRMWARE),
+     .flags = BLE_GATT_CHR_F_READ},
+    {.uuid = &DIS_SOFTWARE_UUID.u,
+     .access_cb = NimBLEImprov::gatt_access_,
+     .arg = ATTR_ARG(ATTR_DIS_SOFTWARE),
+     .flags = BLE_GATT_CHR_F_READ},
+    {},
+};
+
+static const struct ble_gatt_svc_def GATT_SERVICES[] = {
+    {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &DIS_UUID.u, .characteristics = DIS_CHARACTERISTICS},
+    {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &IMPROV_SERVICE_UUID.u, .characteristics = IMPROV_CHARACTERISTICS},
+    {},
+};
+
+#undef ATTR_ARG
+
+// ---- lifecycle ----
 
 NimBLEImprov::NimBLEImprov() {
   global_nimble_improv = this;
-
-  // Register Improv GATT services with nimble_base
-  // This happens at construction time, before nimble_base's setup()
-  ESP_LOGI(TAG, "Registering Improv GATT services with nimble_base");
-  nimble_base::NimBLEBase::register_gatt_services(improv_gatt_svcs);
-
-  // Register Improv service UUID for advertising so clients can discover it
-  ESP_LOGI(TAG, "Registering Improv service UUID for advertising");
-  nimble_base::NimBLEBase::register_advertising_service_uuid(&IMPROV_SERVICE_UUID);
-
-  // Get an explicit host-sync signal instead of probing host state early.
-  nimble_base::NimBLEBase::register_sync_callback(&NimBLEImprov::on_nimble_sync_);
+  // NimBLE only accepts services before the host starts (nimble_base::setup()).
+  nimble_base::NimBLEBase::register_gatt_services(GATT_SERVICES);
 }
 
 void NimBLEImprov::setup() {
-  // Prepare preference handle only when preferences are ready.
-  if (global_preferences != nullptr) {
-    this->pref_creds_ = global_preferences->make_preference<StoredWiFi>(PREF_ID_WIFI);
-
-    // Always try to load saved credentials from NVS if they exist.
-    // NVS credentials (from Improv provisioning) should override YAML credentials.
-    this->load_saved_credentials_();
-  } else {
-    ESP_LOGW(TAG, "Preferences not available yet, skipping NVS credential load");
+#ifdef USE_BINARY_SENSOR
+  if (this->authorizer_ != nullptr) {
+    this->authorizer_->add_on_state_callback([this](bool state) {
+      if (state) {
+        this->authorized_start_ = millis();
+        this->identify_start_ = 0;
+      }
+    });
   }
-
-  ESP_LOGI(TAG, "Setting up NimBLE Improv WiFi Provisioning...");
-  ESP_LOGI(TAG, "Services registered, waiting for NimBLE sync");
-  // Avoid notifications during setup; host may not be initialized yet.
-  this->state_ = IMPROV_STATE_STOPPED;
-  ESP_LOGI(TAG, "[DIAG] NimBLEImprov::setup() DONE");
+#endif
+  nimble_base::global_nimble_base->add_listener(this);
+  // The WiFi component's "last connected" clock starts at boot too.
+  this->last_wifi_connected_ = millis();
 }
 
-float NimBLEImprov::get_setup_priority() const {
-  // Run after nimble_base so host callbacks and core init are in place,
-  // but still before WiFi setup priority.
-  return setup_priority::AFTER_BLUETOOTH - 1.0f;
-}
-
-// Persist credentials to NVS
-void NimBLEImprov::save_credentials_(const std::string &ssid, const std::string &password) {
-  StoredWiFi rec{};
-  rec.version = 1;
-  std::strncpy(rec.ssid, ssid.c_str(), sizeof(rec.ssid) - 1);
-  std::strncpy(rec.password, password.c_str(), sizeof(rec.password) - 1);
-  bool ok = this->pref_creds_.save(&rec);
-  ESP_LOGI(TAG, "Saved WiFi credentials to NVS: %s", ok ? "OK" : "FAIL");
-
-  // Replace STA with the newly provisioned network
-  wifi::WiFiAP ap;
-  ap.set_ssid(rec.ssid);
-  ap.set_password(rec.password);
-  wifi::global_wifi_component->set_sta(ap);
-}
-
-// Load credentials from NVS and switch to them
-void NimBLEImprov::load_saved_credentials_() {
-  StoredWiFi rec{};
-  if (!this->pref_creds_.load(&rec)) {
-    ESP_LOGD(TAG, "No saved WiFi credentials found in NVS");
+void NimBLEImprov::migrate_legacy_credentials_() {
+  auto pref = global_preferences->make_preference<LegacyStoredWiFi>(LEGACY_PREF_ID_WIFI);
+  LegacyStoredWiFi rec{};
+  if (!pref.load(&rec) || rec.version != 1 || rec.ssid[0] == '\0')
     return;
-  }
-  if (rec.version != 1 || rec.ssid[0] == '\0') {
-    ESP_LOGW(TAG, "Saved WiFi credentials invalid");
-    return;
-  }
-
-  // Overwrite STA before WiFi starts so YAML entries don't take precedence
-  if (wifi::global_wifi_component == nullptr) {
-    ESP_LOGW(TAG, "WiFi component not available yet, skipping NVS credential load");
-    return;
-  }
-  wifi::WiFiAP ap;
-  ap.set_ssid(rec.ssid);
-  ap.set_password(rec.password);
-  wifi::global_wifi_component->set_sta(ap);
-
-  ESP_LOGI(TAG, "Loaded saved WiFi credentials for SSID '%s' from NVS", rec.ssid);
-}
-
-void NimBLEImprov::loop() {
-  // Get characteristic handles after explicit host sync callback (one-time check).
-  if (!this->service_started_ && this->nimble_synced_) {
-    ESP_LOGI(TAG, "NimBLE host synced, setting up Improv service");
-
-    // Get characteristic value handles (services were registered by nimble_proxy during setup)
-    int rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_STATUS_UUID.u,
-                            nullptr, &this->status_handle_);
-    if (rc == 0) {
-      ESP_LOGD(TAG, "Status characteristic handle: %d", this->status_handle_);
-    } else {
-      ESP_LOGE(TAG, "Failed to find Status characteristic: %d", rc);
-    }
-
-    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_ERROR_UUID.u,
-                            nullptr, &this->error_handle_);
-    if (rc == 0) {
-      ESP_LOGD(TAG, "Error characteristic handle: %d", this->error_handle_);
-    }
-
-    rc = ble_gatts_find_chr(&IMPROV_SERVICE_UUID.u, &IMPROV_RPC_RESULT_UUID.u,
-                            nullptr, &this->rpc_result_handle_);
-    if (rc == 0) {
-      ESP_LOGD(TAG, "RPC Result characteristic handle: %d", this->rpc_result_handle_);
-    }
-
-    // Don't advertise separately - nimble_proxy already handles advertising
-    // The Improv service is available via the existing advertising
-    ESP_LOGI(TAG, "Improv service ready (using nimble_proxy advertising)");
-    this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-    this->service_started_ = true;
-  }
-
-  // Check if connection was lost
-  if (this->service_started_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE) {
-    struct ble_gap_conn_desc desc;
-    if (ble_gap_conn_find(this->conn_handle_, &desc) != 0) {
-      // Connection no longer exists
-      ESP_LOGI(TAG, "BLE connection lost: handle=%d", this->conn_handle_);
-      this->conn_handle_ = BLE_HS_CONN_HANDLE_NONE;
-      this->authorized_ = false;
-      this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-    }
-  }
-
-  // Check authorization timeout
-  if (this->authorized_ && this->authorized_start_ > 0) {
-    if (millis() - this->authorized_start_ > this->authorized_duration_) {
-      ESP_LOGI(TAG, "Authorization expired");
-      this->authorized_ = false;
-      this->set_state_(IMPROV_STATE_AWAITING_AUTHORIZATION);
-    }
-  }
-
-  // Check WiFi connection progress
-  if (this->wifi_connect_running_) {
-    this->check_wifi_connection_();
-  }
+  rec.ssid[sizeof(rec.ssid) - 1] = '\0';
+  rec.password[sizeof(rec.password) - 1] = '\0';
+  ESP_LOGI(TAG, "Moving previously provisioned network '%s' into the WiFi component", rec.ssid);
+  wifi::global_wifi_component->save_wifi_sta(rec.ssid, rec.password);
+  LegacyStoredWiFi cleared{};
+  pref.save(&cleared);
 }
 
 void NimBLEImprov::dump_config() {
-  ESP_LOGI(TAG, "[DIAG] NimBLEImprov::dump_config() ENTRY");
   ESP_LOGCONFIG(TAG, "NimBLE Improv:");
-  ESP_LOGCONFIG(TAG, "  Authorized Duration: %lu ms", this->authorized_duration_);
-  ESP_LOGCONFIG(TAG, "  WiFi Timeout: %lu ms", this->wifi_timeout_);
-  ESP_LOGI(TAG, "[DIAG] NimBLEImprov::dump_config() DONE");
+#ifdef USE_BINARY_SENSOR
+  LOG_BINARY_SENSOR("  ", "Authorizer", this->authorizer_);
+#endif
+#ifdef USE_OUTPUT
+  ESP_LOGCONFIG(TAG, "  Status Indicator: '%s'", YESNO(this->status_indicator_ != nullptr));
+#endif
+  ESP_LOGCONFIG(TAG,
+                "  Authorized duration: %" PRIu32 " ms\n"
+                "  WiFi timeout: %" PRIu32 " ms",
+                this->authorized_duration_, this->wifi_timeout_);
 }
 
-void NimBLEImprov::stop_service_() {
-  ESP_LOGI(TAG, "Stopping Improv BLE service");
-
-  // Stop advertising
-  ble_gap_adv_stop();
-
-  this->set_state_(IMPROV_STATE_STOPPED);
+void NimBLEImprov::on_nimble_synced() {
+  this->service_running_ = true;
+  this->advertising_ = false;
 }
 
-// Also notify Status when it changes
-void NimBLEImprov::set_state_(ImprovState state) {
-  if (this->state_ == state) return;
+void NimBLEImprov::on_nimble_reset(int reason) {
+  this->service_running_ = false;
+  this->advertising_ = false;
+  this->conn_handle_.store(BLE_HS_CONN_HANDLE_NONE);
+}
+
+void NimBLEImprov::on_nimble_disabling() {
+  this->stop_advertising_();
+  this->service_running_ = false;
+  this->conn_handle_.store(BLE_HS_CONN_HANDLE_NONE);
+}
+
+void NimBLEImprov::start() {
+  if (this->should_start_ || this->state_ != improv::STATE_STOPPED)
+    return;
+#ifdef USE_PROVISIONING
+  if (provisioning::global_provisioning_manager != nullptr && provisioning::global_provisioning_manager->closed()) {
+    ESP_LOGD(TAG, "Provisioning window closed; not starting Improv");
+    return;
+  }
+#endif
+  ESP_LOGD(TAG, "Setting Improv to start");
+  this->should_start_ = true;
+  this->stop_at_ = 0;
+}
+
+void NimBLEImprov::stop() {
+  this->should_start_ = false;
+  // Let connected clients read the final state before the service goes away
+  // (esp32_improv's "end-service" delay).
+  if (this->stop_at_ == 0)
+    this->stop_at_ = millis() + STOP_ADVERTISING_DELAY;
+}
+
+// ---- main loop ----
+
+void NimBLEImprov::watch_wifi_() {
+  // esp32_improv is started by the WiFi component (no stored network at setup,
+  // or no connection for wifi_timeout) and there is no equivalent hook for
+  // other components, so the same two triggers are applied here.
+  auto *wifi = wifi::global_wifi_component;
+  if (wifi == nullptr)
+    return;
+  const uint32_t now = millis();
+  if (wifi->is_connected())
+    this->last_wifi_connected_ = now;
+  if (this->is_active() || this->should_start_ || this->stop_at_ != 0)
+    return;
+  if (!wifi->has_sta() || (!wifi->is_connected() && now - this->last_wifi_connected_ > this->wifi_timeout_)) {
+    this->start();
+  }
+}
+
+void NimBLEImprov::loop() {
+  if (!this->legacy_checked_) {
+    // Not in setup(): save_wifi_sta() writes through a preference the WiFi
+    // component only creates in its own setup(), which runs after this one.
+    this->legacy_checked_ = true;
+    this->migrate_legacy_credentials_();
+  }
+  this->watch_wifi_();
+  const uint32_t now = millis();
+
+  if (this->stop_at_ != 0 && static_cast<int32_t>(now - this->stop_at_) >= 0) {
+    this->stop_at_ = 0;
+    if (this->state_ != improv::STATE_STOPPED) {
+      this->stop_advertising_();
+      this->set_state_(improv::STATE_STOPPED);
+    }
+  }
+
+  if (!this->service_running_ || !nimble_base::global_nimble_base->is_active()) {
+    if (this->state_ != improv::STATE_STOPPED) {
+      this->state_ = improv::STATE_STOPPED;
+      this->state_byte_.store(this->state_);
+#ifdef USE_NIMBLE_IMPROV_STATE_CALLBACK
+      this->state_callback_.call(this->state_, this->error_state_);
+#endif
+    }
+    this->advertising_ = false;
+    std::lock_guard<std::mutex> lock(this->incoming_mutex_);
+    this->incoming_data_.clear();
+    return;
+  }
+
+  if (this->disconnected_.exchange(false)) {
+    // esp32_improv clears the error when a client disconnects.
+    this->set_error_(improv::ERROR_NONE);
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(this->incoming_mutex_);
+    if (this->state_ == improv::STATE_STOPPED) {
+      this->incoming_data_.clear();
+    } else if (!this->incoming_data_.empty()) {
+      this->pending_data_.insert(this->pending_data_.end(), this->incoming_data_.begin(), this->incoming_data_.end());
+      this->incoming_data_.clear();
+    }
+  }
+  if (!this->pending_data_.empty())
+    this->process_incoming_data_();
+
+  if (this->wifi_connect_deadline_ != 0 && static_cast<int32_t>(now - this->wifi_connect_deadline_) >= 0) {
+    this->wifi_connect_deadline_ = 0;
+    this->on_wifi_connect_timeout_();
+  }
+
+  if (this->state_ != improv::STATE_STOPPED && this->state_ != improv::STATE_PROVISIONED) {
+    this->update_advertising_type_();
+    // A connection stops advertising; resume once the client has gone.
+    if (this->conn_handle_.load() == BLE_HS_CONN_HANDLE_NONE && !ble_gap_adv_active())
+      this->start_advertising_();
+  }
+
+  switch (this->state_) {
+    case improv::STATE_STOPPED:
+      this->set_status_indicator_state_(false);
+      if (this->should_start_) {
+        // Device name first, before any state (esp32_improv parity).
+        this->advertising_device_name_ = true;
+        this->last_name_adv_time_ = now;
+        this->set_state_(this->get_initial_state_(), false);
+        this->apply_advertising_();
+        this->start_advertising_();
+        this->set_error_(improv::ERROR_NONE);
+        this->should_start_ = false;
+        ESP_LOGD(TAG, "Service started!");
+      }
+      break;
+    case improv::STATE_AWAITING_AUTHORIZATION: {
+#ifdef USE_BINARY_SENSOR
+      if (this->authorizer_ == nullptr ||
+          (this->authorized_start_ != 0 && ((now - this->authorized_start_) < this->authorized_duration_))) {
+        this->set_state_(improv::STATE_AUTHORIZED);
+      } else if (!this->check_identify_()) {
+        this->set_status_indicator_state_(true);
+      }
+#else
+      this->set_state_(improv::STATE_AUTHORIZED);
+#endif
+      this->check_wifi_connection_();
+      break;
+    }
+    case improv::STATE_AUTHORIZED: {
+#ifdef USE_BINARY_SENSOR
+      if (this->authorizer_ != nullptr && now - this->authorized_start_ > this->authorized_duration_) {
+        ESP_LOGD(TAG, "Authorization timeout");
+        this->set_state_(improv::STATE_AWAITING_AUTHORIZATION);
+        return;
+      }
+#endif
+      if (!this->check_identify_())
+        this->set_status_indicator_state_((now % 1000) < 500);
+      this->check_wifi_connection_();
+      break;
+    }
+    case improv::STATE_PROVISIONING:
+      this->set_status_indicator_state_((now % 200) < 100);
+      this->check_wifi_connection_();
+      break;
+    case improv::STATE_PROVISIONED: {
+      std::lock_guard<std::mutex> lock(this->incoming_mutex_);
+      this->incoming_data_.clear();
+      this->pending_data_.clear();
+      this->set_status_indicator_state_(false);
+      break;
+    }
+  }
+}
+
+void NimBLEImprov::set_status_indicator_state_(bool state) {
+#ifdef USE_OUTPUT
+  if (this->status_indicator_ == nullptr || this->status_indicator_state_ == state)
+    return;
+  this->status_indicator_state_ = state;
+  if (state) {
+    this->status_indicator_->turn_on();
+  } else {
+    this->status_indicator_->turn_off();
+  }
+#endif
+}
+
+bool NimBLEImprov::check_identify_() {
+  const uint32_t now = millis();
+  bool identify = this->identify_start_ != 0 && now - this->identify_start_ <= this->identify_duration_;
+  if (identify) {
+    uint32_t time = now % 1000;
+    this->set_status_indicator_state_(time < 600 && time % 200 < 100);
+  }
+  return identify;
+}
+
+uint8_t NimBLEImprov::capabilities_() const {
+  uint8_t capabilities = 0x00;
+#ifdef USE_OUTPUT
+  // Identify is only offered when there is something to identify with.
+  if (this->status_indicator_ != nullptr)
+    capabilities |= improv::CAPABILITY_IDENTIFY;
+#endif
+  return capabilities;
+}
+
+improv::State NimBLEImprov::get_initial_state_() const {
+#ifdef USE_BINARY_SENSOR
+  return this->authorizer_ == nullptr ? improv::STATE_AUTHORIZED : improv::STATE_AWAITING_AUTHORIZATION;
+#else
+  return improv::STATE_AUTHORIZED;
+#endif
+}
+
+void NimBLEImprov::set_state_(improv::State state, bool update_advertising) {
+  if (this->state_ == state)
+    return;
+  ESP_LOGD(TAG, "State transition: 0x%02X -> 0x%02X", this->state_, state);
   this->state_ = state;
-  ESP_LOGD(TAG, "State changed to: %d", state);
-  if (this->nimble_synced_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->status_handle_ != 0) {
-    uint8_t val = static_cast<uint8_t>(this->state_);
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
-    if (om) {
-      int rc = ble_gatts_notify_custom(this->conn_handle_, this->status_handle_, om);
-      if (rc != 0) ESP_LOGW(TAG, "Failed to notify status: %d", rc);
-    }
+  this->state_byte_.store(state);
+  if (state != improv::STATE_STOPPED && this->service_running_ && status_handle != 0) {
+    // Notifies subscribed clients; the value is read back through gatt_access_.
+    ble_gatts_chr_updated(status_handle);
   }
+  // STATE_STOPPED is internal and never advertised (esp32_improv parity).
+  if (state != improv::STATE_STOPPED && update_advertising) {
+    this->advertising_device_name_ = false;
+    this->last_name_adv_time_ = millis();
+    this->apply_advertising_();
+  }
+#ifdef USE_NIMBLE_IMPROV_STATE_CALLBACK
+  this->state_callback_.call(this->state_, this->error_state_);
+#endif
 }
 
-void NimBLEImprov::set_error_(ImprovError error) {
-  if (this->error_ == error)
+void NimBLEImprov::set_error_(improv::Error error) {
+  if (error != improv::ERROR_NONE) {
+    ESP_LOGE(TAG, "Error: %d", error);
+  }
+  if (this->error_state_ == error)
     return;
-
-  this->error_ = error;
-  ESP_LOGD(TAG, "Error set to: %d", error);
-
-  // Notify error characteristic if we have a connection and handle
-  if (this->nimble_synced_ && this->conn_handle_ != BLE_HS_CONN_HANDLE_NONE && this->error_handle_ != 0) {
-    uint8_t val = static_cast<uint8_t>(this->error_);
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(&val, sizeof(val));
-    if (om != nullptr) {
-      int rc = ble_gatts_notify_custom(this->conn_handle_, this->error_handle_, om);
-      if (rc != 0) {
-        ESP_LOGW(TAG, "Failed to notify error: %d", rc);
-      }
-    }
+  this->error_state_ = error;
+  this->error_byte_.store(error);
+  if (this->state_ != improv::STATE_STOPPED && this->service_running_ && error_handle != 0) {
+    ble_gatts_chr_updated(error_handle);
   }
 }
 
-void NimBLEImprov::process_command_(const std::vector<uint8_t> &data) {
-  ESP_LOGD(TAG, "process_command_: raw len=%u hex=%s", (unsigned) data.size(), to_hex_(data).c_str());
+void NimBLEImprov::send_response_(std::span<const uint8_t> response) {
+  {
+    std::lock_guard<std::mutex> lock(this->response_mutex_);
+    this->response_len_ = std::min<size_t>(response.size(), this->response_.size());
+    memcpy(this->response_.data(), response.data(), this->response_len_);
+  }
+  if (this->state_ != improv::STATE_STOPPED && this->service_running_ && rpc_result_handle != 0) {
+    ble_gatts_chr_updated(rpc_result_handle);
+  }
+}
 
-  if (data.empty()) {
-    this->set_error_(ERROR_INVALID_RPC);
+void NimBLEImprov::process_incoming_data_() {
+  auto &data = this->pending_data_;
+  if (data.size() < 3)
     return;
-  }
-
-  uint8_t cmd = data[0];
-  size_t idx = 1;
-
-  // Clear previous error on new command
-  this->set_error_(ERROR_NONE);
-
-  switch (cmd) {
-    case WIFI_SETTINGS: {
-      // Try BLE framing with [len][payload]
-      size_t pstart = idx;
-      size_t pend = data.size();
-      if (data.size() >= 2 && (size_t)(2 + data[1]) <= data.size()) {
-        uint8_t total_len = data[1];
-        pstart = 2;
-        pend = 2 + total_len;
-      }
-
-      bool parsed = false;
-      std::string ssid, password;
-
-      // Attempt LP/LP inside payload
-      {
-        size_t p = pstart;
-        if (p < pend) {
-          // local slice for LP parsing
-          std::vector<uint8_t> slice(data.begin() + pstart, data.begin() + pend);
-          size_t si = 0;
-          if (read_lp_str_(slice, si, ssid) && read_lp_str_(slice, si, password) && si == slice.size()) {
-            parsed = true;
-          }
+  uint8_t length = data[1];
+  if (data.size() - 3 == length) {
+    this->set_error_(improv::ERROR_NONE);
+    improv::ImprovCommand command = improv::parse_improv_data(data);
+    data.clear();
+    switch (command.command) {
+      case improv::BAD_CHECKSUM:
+        ESP_LOGW(TAG, "Error decoding Improv payload");
+        this->set_error_(improv::ERROR_INVALID_RPC);
+        break;
+      case improv::WIFI_SETTINGS: {
+        if (this->state_ != improv::STATE_AUTHORIZED) {
+          ESP_LOGW(TAG, "Settings received, but not authorized");
+          this->set_error_(improv::ERROR_NOT_AUTHORIZED);
+          return;
         }
-      }
-
-      // Fallback: null-delimited SSID\0PASSWORD within payload
-      if (!parsed) {
-        if (pstart <= pend) {
-          auto beg = data.begin() + pstart;
-          auto end = data.begin() + pend;
-          auto it0 = std::find(beg, end, (uint8_t)0x00);
-          if (it0 != end) {
-            ssid.assign(reinterpret_cast<const char *>(&*beg), std::distance(beg, it0));
-            auto pwd_beg = it0 + 1;
-            password.assign(reinterpret_cast<const char *>(&*pwd_beg), std::distance(pwd_beg, end));
-            parsed = true;
-          }
+#ifdef USE_PROVISIONING
+        if (provisioning::global_provisioning_manager != nullptr &&
+            provisioning::global_provisioning_manager->closed()) {
+          ESP_LOGW(TAG, "Provisioning window closed; refusing settings");
+          this->set_error_(improv::ERROR_NOT_AUTHORIZED);
+          return;
         }
+#endif
+        if (wifi::global_wifi_component->is_disabled()) {
+          ESP_LOGW(TAG, "Wi-Fi is disabled; cannot provision");
+          this->set_error_(improv::ERROR_UNABLE_TO_CONNECT);
+          return;
+        }
+        wifi::WiFiAP sta{};
+        sta.set_ssid(command.ssid.c_str());
+        sta.set_password(command.password.c_str());
+        this->connecting_sta_ = sta;
+        wifi::global_wifi_component->set_sta(sta);
+        wifi::global_wifi_component->start_connecting(sta);
+        this->set_state_(improv::STATE_PROVISIONING);
+        ESP_LOGD(TAG, "Received Improv Wi-Fi settings ssid=%s, password=" LOG_SECRET("%s"), command.ssid.c_str(),
+                 command.password.c_str());
+        this->wifi_connect_deadline_ = millis() + WIFI_CONNECT_TIMEOUT;
+        break;
       }
-
-      if (!parsed) {
-        ESP_LOGW(TAG, "WIFI_SETTINGS: failed to parse payload (pstart=%u pend=%u)", (unsigned) pstart, (unsigned) pend);
-        this->set_error_(ERROR_INVALID_RPC);
-        return;
-      }
-
-      ESP_LOGI(TAG, "WIFI_SETTINGS: ssid_len=%u pwd_len=%u", (unsigned) ssid.size(), (unsigned) password.size());
-
-      if (ssid.empty()) {
-        this->set_error_(ERROR_INVALID_SSID);
-        return;
-      }
-
-      this->set_state_(IMPROV_STATE_PROVISIONING);
-      this->start_wifi_connect_(ssid, password);
-      return;
+      case improv::IDENTIFY:
+        this->identify_start_ = millis();
+        break;
+      default:
+        ESP_LOGW(TAG, "Unknown Improv payload");
+        this->set_error_(improv::ERROR_UNKNOWN_RPC);
+        break;
     }
-
-    case IDENTIFY: {
-      // Acknowledge Identify with empty result
-      this->send_response_({});
-      return;
-    }
-
-    case GET_DEVICE_INFO: {
-      // 4 LP strings: name, firmware, hardware, address/url (empty until WiFi connects)
-      std::vector<uint8_t> payload;
-      auto push_lp = [&](const std::string &s) {
-        uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, s.size()));
-        payload.push_back(n);
-        payload.insert(payload.end(), s.begin(), s.begin() + n);
-      };
-      push_lp(App.get_name());
-      {
-        char build_time_buf[26];
-        App.get_build_time_string(std::span<char, 26>(build_time_buf));
-        push_lp(std::string(build_time_buf)); // or your version string
-      }
-      push_lp("ESP32-S3");
-      push_lp(""); // URL sent after WiFi connects
-      this->send_response_(payload);
-      return;
-    }
-
-    case GET_WIFI_NETWORKS: {
-      // Not implemented: return empty list so client allows manual entry
-      this->send_response_({});
-      return;
-    }
-
-    default:
-      this->set_error_(ERROR_INVALID_RPC);
-      return;
+  } else if (data.size() - 2 > length) {
+    ESP_LOGV(TAG, "Too much data received or data malformed; resetting buffer");
+    data.clear();
+  } else {
+    ESP_LOGV(TAG, "Waiting for split data packets");
   }
 }
 
-void NimBLEImprov::start_wifi_connect_(const std::string &ssid, const std::string &password) {
-  this->incoming_ssid_ = ssid;
-  this->incoming_password_ = password;
-  this->wifi_connect_running_ = true;
-  this->wifi_connect_start_ = millis();
-  this->set_state_(IMPROV_STATE_PROVISIONING);
-
-  ESP_LOGI(TAG, "Attempting to connect to WiFi: %s", ssid.c_str());
-
-  // Create WiFiAP struct properly
-  wifi::WiFiAP sta_ap;
-  sta_ap.set_ssid(ssid);
-  sta_ap.set_password(password);
-
-  // Use the correct WiFi API - start_connecting expects WiFiAP and bool
-  wifi::global_wifi_component->start_connecting(sta_ap, false);
+void NimBLEImprov::on_wifi_connect_timeout_() {
+  this->set_error_(improv::ERROR_UNABLE_TO_CONNECT);
+  this->set_state_(improv::STATE_AUTHORIZED);
+#ifdef USE_BINARY_SENSOR
+  if (this->authorizer_ != nullptr)
+    this->authorized_start_ = millis();
+#endif
+  ESP_LOGW(TAG, "Timed out while connecting to Wi-Fi network");
+  wifi::global_wifi_component->clear_sta();
 }
 
 void NimBLEImprov::check_wifi_connection_() {
-  if (!this->wifi_connect_running_)
+  if (!wifi::global_wifi_component->is_connected())
     return;
 
-  if (millis() - this->wifi_connect_start_ > this->wifi_timeout_) {
-    ESP_LOGW(TAG, "WiFi connection timeout");
-    this->set_error_(ERROR_UNABLE_TO_CONNECT);
-    this->set_state_(IMPROV_STATE_AUTHORIZED);
-    this->wifi_connect_running_ = false;
-    return;
+  if (this->state_ == improv::STATE_PROVISIONING) {
+    wifi::global_wifi_component->save_wifi_sta(this->connecting_sta_.get_ssid(), this->connecting_sta_.get_password());
+    this->connecting_sta_ = {};
+    this->wifi_connect_deadline_ = 0;
+
+    std::array<uint8_t, improv::RPC_RESPONSE_MAX_SIZE> buf;
+    improv::RpcResponseBuilder builder(buf, improv::WIFI_SETTINGS);
+#ifdef USE_ESP32_IMPROV_NEXT_URL
+    // improv_base's next_url helper is keyed on esp32_improv's define; codegen
+    // emits it for this component (see __init__.py).
+    this->add_next_url_(builder, MAX_NEXT_URL_LEN);
+#endif
+    builder.add_string(ESPHOME_MY_LINK, sizeof(ESPHOME_MY_LINK) - 1);
+#ifdef USE_WEBSERVER
+    for (auto &ip : wifi::global_wifi_component->wifi_sta_ip_addresses()) {
+      if (ip.is_ip4()) {
+        char ip_buf[network::IP_ADDRESS_BUFFER_SIZE];
+        ip.str_to(ip_buf);
+        char webserver_url[7 + network::IP_ADDRESS_BUFFER_SIZE + 1 + 5 + 1];
+        size_t len =
+            buf_append_printf(webserver_url, sizeof(webserver_url), 0, "http://%s:%u", ip_buf, USE_WEBSERVER_PORT);
+        if (!builder.add_string(webserver_url, len)) {
+          ESP_LOGW(TAG, "Response full; URL dropped");
+        }
+        break;
+      }
+    }
+#endif
+    this->send_response_(builder.finish());
+  } else if (this->is_active() && this->state_ != improv::STATE_PROVISIONED) {
+    ESP_LOGD(TAG, "WiFi provisioned externally");
   }
 
-  if (wifi::global_wifi_component->is_connected()) {
-    ESP_LOGI(TAG, "WiFi connected successfully!");
-    this->set_state_(IMPROV_STATE_PROVISIONED);
-    this->wifi_connect_running_ = false;
+  this->set_state_(improv::STATE_PROVISIONED);
+  this->stop();
+}
 
-    // Persist and set as the only network so it survives reboot
-    this->save_credentials_(this->incoming_ssid_, this->incoming_password_);
+// ---- advertising ----
 
-    // Send success response with redirect URL
-    auto ip_addresses = wifi::global_wifi_component->get_ip_addresses();
-    std::string redirect_url = "http://";
-    if (!ip_addresses.empty()) {
-      char ip_buf[20] = {};
-      ip_addresses[0].str_to(ip_buf);
-      redirect_url += ip_buf;
-    } else {
-      redirect_url += "192.168.1.1";
+void NimBLEImprov::update_advertising_type_() {
+  const uint32_t now = millis();
+  if (this->advertising_device_name_) {
+    if (now - this->last_name_adv_time_ >= NAME_ADVERTISING_DURATION) {
+      this->advertising_device_name_ = false;
+      this->apply_advertising_();
     }
-    redirect_url += "/";
-
-    std::vector<uint8_t> response;
-    uint8_t n = static_cast<uint8_t>(std::min<size_t>(255, redirect_url.size()));
-    response.push_back(n);
-    response.insert(response.end(), redirect_url.begin(), redirect_url.begin() + n);
-    this->send_response_(response);
-
-    this->set_error_(ERROR_NONE);
+    return;
+  }
+  if (now - this->last_name_adv_time_ >= NAME_ADVERTISING_INTERVAL) {
+    this->advertising_device_name_ = true;
+    this->last_name_adv_time_ = now;
+    this->apply_advertising_();
   }
 }
 
-// NimBLE GATT characteristic access callback (non-static, declared as friend)
-int improv_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                      struct ble_gatt_access_ctxt *ctxt, void *arg) {
-  if (global_nimble_improv == nullptr) {
+void NimBLEImprov::apply_advertising_() {
+  if (!this->service_running_)
+    return;
+  // Advertisement: flags + the Improv service UUID + either the Improv service
+  // data (state, capabilities) or, for one second a minute, the device name -
+  // the payload esp32_ble builds for esp32_improv. 3 + 18 + 10 = 31 bytes.
+  struct ble_hs_adv_fields fields {};
+  fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+  fields.uuids128 = &IMPROV_SERVICE_UUID;
+  fields.num_uuids128 = 1;
+  fields.uuids128_is_complete = 1;
+
+  const char *name = ble_svc_gap_device_name();
+  const size_t name_len = strlen(name);
+  uint8_t service_data[IMPROV_SERVICE_DATA_SIZE] = {};
+  if (this->advertising_device_name_) {
+    // Only 8 bytes remain next to the flags and 128-bit UUID.
+    fields.name = reinterpret_cast<const uint8_t *>(name);
+    fields.name_len = std::min<size_t>(name_len, 8);
+    fields.name_is_complete = name_len <= 8 ? 1 : 0;
+  } else {
+    service_data[0] = IMPROV_PROTOCOL_ID_1;
+    service_data[1] = IMPROV_PROTOCOL_ID_2;
+    service_data[2] = static_cast<uint8_t>(this->state_);
+    service_data[3] = this->capabilities_();
+    fields.svc_data_uuid16 = service_data;
+    fields.svc_data_uuid16_len = IMPROV_SERVICE_DATA_SIZE;
+  }
+  int rc = ble_gap_adv_set_fields(&fields);
+  if (rc != 0) {
+    ESP_LOGW(TAG, "Setting advertising data failed: %d", rc);
+  }
+
+  // Scan response: the full name, so active scanners always see it.
+  struct ble_hs_adv_fields rsp {};
+  rsp.name = reinterpret_cast<const uint8_t *>(name);
+  rsp.name_len = std::min<size_t>(name_len, BLE_HS_ADV_MAX_SZ - 2);
+  rsp.name_is_complete = name_len <= BLE_HS_ADV_MAX_SZ - 2 ? 1 : 0;
+  rc = ble_gap_adv_rsp_set_fields(&rsp);
+  if (rc != 0) {
+    ESP_LOGW(TAG, "Setting scan response failed: %d", rc);
+  }
+}
+
+void NimBLEImprov::start_advertising_() {
+  if (!this->service_running_ || ble_gap_adv_active())
+    return;
+  this->apply_advertising_();
+  struct ble_gap_adv_params params {};
+  params.conn_mode = BLE_GAP_CONN_MODE_UND;
+  params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+  int rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, nullptr, BLE_HS_FOREVER, &params, NimBLEImprov::gap_event_, this);
+  if (rc != 0 && rc != BLE_HS_EALREADY) {
+    ESP_LOGW(TAG, "Starting advertising failed: %d", rc);
+    return;
+  }
+  this->advertising_ = true;
+}
+
+void NimBLEImprov::stop_advertising_() {
+  if (ble_gap_adv_active())
+    ble_gap_adv_stop();
+  this->advertising_ = false;
+}
+
+// ---- host task ----
+
+int NimBLEImprov::gap_event_(struct ble_gap_event *event, void *arg) {
+  auto *self = static_cast<NimBLEImprov *>(arg);
+  switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT:
+      if (event->connect.status == 0)
+        self->conn_handle_.store(event->connect.conn_handle);
+      break;
+    case BLE_GAP_EVENT_DISCONNECT:
+      self->conn_handle_.store(BLE_HS_CONN_HANDLE_NONE);
+      self->disconnected_.store(true);
+      break;
+    default:
+      break;
+  }
+  return 0;
+}
+
+static int append_string(struct os_mbuf *om, const char *value) {
+  return os_mbuf_append(om, value, strlen(value)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+int NimBLEImprov::gatt_access_(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt,
+                               void *arg) {
+  auto *self = global_nimble_improv;
+  if (self == nullptr)
     return BLE_ATT_ERR_UNLIKELY;
-  }
+  const auto id = static_cast<AttrId>(reinterpret_cast<uintptr_t>(arg));
 
-  // Track connection handle on first access
-  if (global_nimble_improv->conn_handle_ == BLE_HS_CONN_HANDLE_NONE && conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-    global_nimble_improv->conn_handle_ = conn_handle;
-    ESP_LOGI(TAG, "BLE connection detected via characteristic access: handle=%d", conn_handle);
-
-    // Grant authorization if authorizer is not used
-    if (global_nimble_improv->authorizer_ == nullptr) {
-      global_nimble_improv->authorized_ = true;
-      global_nimble_improv->authorized_start_ = millis();
-
-      // Clear any previous error before entering AUTHORIZED
-      global_nimble_improv->set_error_(ERROR_NONE);
-
-      // Move to AUTHORIZED (this should notify status if your set_state_ does)
-      global_nimble_improv->set_state_(IMPROV_STATE_AUTHORIZED);
-      ESP_LOGI(TAG, "Auto-authorized (no authorizer configured)");
+  if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+    if (id != ATTR_RPC_COMMAND)
+      return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+    uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+    if (len > MAX_INCOMING_BYTES)
+      return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    std::lock_guard<std::mutex> lock(self->incoming_mutex_);
+    if (self->incoming_data_.size() + len > MAX_INCOMING_BYTES)
+      self->incoming_data_.clear();  // malformed stream; the loop resyncs on the next frame
+    // Copy straight from the mbuf: no staging buffer on the host task's stack.
+    const size_t offset = self->incoming_data_.size();
+    self->incoming_data_.resize(offset + len);
+    if (os_mbuf_copydata(ctxt->om, 0, len, self->incoming_data_.data() + offset) != 0) {
+      self->incoming_data_.resize(offset);
+      return BLE_ATT_ERR_UNLIKELY;
     }
-  }
-
-  // Log all access attempts for debugging
-  ESP_LOGV(TAG, "GATT access: conn=%d attr=%d op=%d", conn_handle, attr_handle, ctxt->op);
-
-  const ble_uuid_t *uuid = ctxt->chr->uuid;
-
-  // Handle CCCD (notification enable/disable) for all characteristics
-  // This is needed before characteristic-specific handling
-  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC || ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC) {
-    // CCCD operations - allow client to enable/disable notifications
-    // NimBLE handles the actual CCCD storage, we just need to not return an error
-    ESP_LOGD(TAG, "CCCD %s operation", ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "read" : "write");
     return 0;
   }
 
-  // Determine which characteristic is being accessed
-  if (ble_uuid_cmp(uuid, &IMPROV_STATUS_UUID.u) == 0) {
-    // Status characteristic (read + notify)
-    ESP_LOGD(TAG, "Status characteristic access, op=%d", ctxt->op);
-    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      uint8_t state = static_cast<uint8_t>(global_nimble_improv->state_);
-      ESP_LOGD(TAG, "Returning status: %d", state);
-      int rc = os_mbuf_append(ctxt->om, &state, sizeof(state));
-      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+  if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR)
+    return BLE_ATT_ERR_UNLIKELY;
+
+  switch (id) {
+    case ATTR_STATUS: {
+      uint8_t value = self->state_byte_.load();
+      return os_mbuf_append(ctxt->om, &value, 1) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-  }
-  else if (ble_uuid_cmp(uuid, &IMPROV_ERROR_UUID.u) == 0) {
-    // Error characteristic (read)
-    ESP_LOGD(TAG, "Error characteristic access, op=%d", ctxt->op);
-    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      uint8_t error = static_cast<uint8_t>(global_nimble_improv->error_);
-      ESP_LOGD(TAG, "Returning error: %d", error);
-      int rc = os_mbuf_append(ctxt->om, &error, sizeof(error));
-      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    case ATTR_ERROR: {
+      uint8_t value = self->error_byte_.load();
+      return os_mbuf_append(ctxt->om, &value, 1) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-  }
-  else if (ble_uuid_cmp(uuid, &IMPROV_RPC_COMMAND_UUID.u) == 0) {
-    // RPC Command characteristic (write)
-    ESP_LOGD(TAG, "RPC Command characteristic access, op=%d", ctxt->op);
-    if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-      // Extract command data from mbuf
-      uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-      std::vector<uint8_t> data(om_len);
-      int rc = ble_hs_mbuf_to_flat(ctxt->om, data.data(), om_len, nullptr);
-      if (rc == 0) {
-        ESP_LOGD(TAG, "Processing RPC command, length=%d", om_len);
-        global_nimble_improv->process_command_(data);
-      }
-      return 0;
+    case ATTR_RPC_RESULT: {
+      std::lock_guard<std::mutex> lock(self->response_mutex_);
+      return os_mbuf_append(ctxt->om, self->response_.data(), self->response_len_) == 0
+                 ? 0
+                 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-  }
-  else if (ble_uuid_cmp(uuid, &IMPROV_RPC_RESULT_UUID.u) == 0) {
-    // RPC Result characteristic (read - but typically sent via notify)
-    ESP_LOGV(TAG, "RPC Result characteristic access, op=%d", ctxt->op);
-    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      // Return empty data - results are sent via notifications
-      return 0;
+    case ATTR_CAPABILITIES: {
+      uint8_t value = self->capabilities_();
+      return os_mbuf_append(ctxt->om, &value, 1) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-  }
-  else if (ble_uuid_cmp(uuid, &IMPROV_CAPABILITIES_UUID.u) == 0) {
-    // Capabilities characteristic (read)
-    ESP_LOGD(TAG, "Capabilities characteristic access, op=%d", ctxt->op);
-    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-      // Capability bitmask:
-      // Bit 0 (0x01) = Identify capability
-      // Setting bit 0 to indicate we support the Identify command
-      uint8_t capabilities = 0x01;  // Support Identify
-      ESP_LOGV(TAG, "Returning capabilities: 0x%02x", capabilities);
-      int rc = os_mbuf_append(ctxt->om, &capabilities, sizeof(capabilities));
-      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    case ATTR_DIS_MANUFACTURER:
+#ifdef ESPHOME_PROJECT_NAME
+      return append_string(ctxt->om, ESPHOME_PROJECT_NAME);
+#else
+      return append_string(ctxt->om, "ESPHome");
+#endif
+    case ATTR_DIS_MODEL:
+      return append_string(ctxt->om, App.get_friendly_name().empty() ? App.get_name().c_str()
+                                                                      : App.get_friendly_name().c_str());
+    case ATTR_DIS_SERIAL:
+      return append_string(ctxt->om, App.get_name().c_str());
+    case ATTR_DIS_HARDWARE: {
+      esp_chip_info_t chip;
+      esp_chip_info(&chip);
+      char hardware[48];
+      snprintf(hardware, sizeof(hardware), "%s rev %u.%u (%u cores)", CONFIG_IDF_TARGET, chip.revision / 100,
+               chip.revision % 100, chip.cores);
+      return append_string(ctxt->om, hardware);
     }
-  }
-
-  // Log unhandled operations for debugging
-  char uuid_str[BLE_UUID_STR_LEN];
-  ble_uuid_to_str(uuid, uuid_str);
-  ESP_LOGW(TAG, "Unhandled GATT operation: op=%d for UUID=%s", ctxt->op, uuid_str);
-  return BLE_ATT_ERR_UNLIKELY;
-}
-
-// Device Information Service characteristic access callback
-int device_info_chr_access(uint16_t conn_handle, uint16_t attr_handle,
-                           struct ble_gatt_access_ctxt *ctxt, void *arg) {
-  const ble_uuid_t *uuid = ctxt->chr->uuid;
-
-  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-    // Use static storage for dynamic strings to ensure they persist
-    static std::string model_str;
-    static std::string serial_str;
-    static std::string hardware_str;
-    static std::string firmware_str;
-    static std::string software_str;
-    const char *value = nullptr;
-
-    if (ble_uuid_cmp(uuid, &MANUFACTURER_NAME_UUID.u) == 0) {
-      // Manufacturer: Your project name or "ESPHome"
-      #ifdef ESPHOME_PROJECT_NAME
-      value = ESPHOME_PROJECT_NAME;
-      #else
-      value = "ESPHome";
-      #endif
-
-    } else if (ble_uuid_cmp(uuid, &MODEL_NUMBER_UUID.u) == 0) {
-      // Model: Friendly name if available, otherwise board type
-      const std::string &friendly = App.get_friendly_name();
-      if (!friendly.empty()) {
-        model_str = friendly;
-      } else {
-        #ifdef ESPHOME_BOARD
-        model_str = ESPHOME_BOARD;
-        #else
-        model_str = "ESP32";
-        #endif
-      }
-      value = model_str.c_str();
-
-    } else if (ble_uuid_cmp(uuid, &SERIAL_NUMBER_UUID.u) == 0) {
-      // Serial: Device name (unique identifier/hostname)
-      serial_str = App.get_name();
-      value = serial_str.c_str();
-
-    } else if (ble_uuid_cmp(uuid, &HARDWARE_REVISION_UUID.u) == 0) {
-      // Hardware: ESP chip info
-      #ifdef ESP32
-      esp_chip_info_t chip_info;
-      esp_chip_info(&chip_info);
-      hardware_str = "ESP32";
-      if (chip_info.model == CHIP_ESP32) {
-        hardware_str += " Rev " + std::to_string(chip_info.revision);
-      }
-      hardware_str += " (" + std::to_string(chip_info.cores) + " cores)";
-      #else
-      hardware_str = "ESP32";
-      #endif
-      value = hardware_str.c_str();
-
-    } else if (ble_uuid_cmp(uuid, &FIRMWARE_REVISION_UUID.u) == 0) {
-      // Firmware: Compilation date/time
-      {
-        char build_time_buf[26];
-        App.get_build_time_string(std::span<char, 26>(build_time_buf));
-        firmware_str = std::string(build_time_buf);
-      }
-      value = firmware_str.c_str();
-
-    } else if (ble_uuid_cmp(uuid, &SOFTWARE_REVISION_UUID.u) == 0) {
-      // Software: Project version or ESPHome version
-      #ifdef ESPHOME_PROJECT_VERSION
-      software_str = std::string(ESPHOME_PROJECT_VERSION);
-      #ifdef ESPHOME_VERSION
-      software_str += " (ESPHome " + std::string(ESPHOME_VERSION) + ")";
-      #endif
-      #elif defined(ESPHOME_VERSION)
-      software_str = std::string("ESPHome ") + ESPHOME_VERSION;
-      #else
-      software_str = "Unknown";
-      #endif
-      value = software_str.c_str();
+    case ATTR_DIS_FIRMWARE: {
+      char build_time[Application::BUILD_TIME_STR_SIZE];
+      App.get_build_time_string(build_time);
+      return append_string(ctxt->om, build_time);
     }
-
-    if (value != nullptr) {
-      int rc = os_mbuf_append(ctxt->om, value, strlen(value));
-      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
-  }
-
-  return BLE_ATT_ERR_UNLIKELY;
-}
-
-void NimBLEImprov::send_response_(const std::vector<uint8_t> &payload) {
-  // Ensure we have a connection and a valid value handle for RPC Result
-  if (this->conn_handle_ == BLE_HS_CONN_HANDLE_NONE || this->rpc_result_handle_ == 0) {
-    ESP_LOGW(TAG, "send_response_: no active connection or RPC Result handle missing");
-    return;
-  }
-
-  // Build mbuf from payload (zero-length is allowed for Identify ack, etc.)
-  const void *data_ptr = payload.empty() ? nullptr : payload.data();
-  struct os_mbuf *om = ble_hs_mbuf_from_flat(data_ptr, payload.size());
-  if (om == nullptr) {
-    ESP_LOGW(TAG, "send_response_: failed to allocate mbuf (len=%u)", (unsigned) payload.size());
-    return;
-  }
-
-  int rc = ble_gatts_notify_custom(this->conn_handle_, this->rpc_result_handle_, om);
-  if (rc != 0) {
-    ESP_LOGW(TAG, "send_response_: notify failed rc=%d (conn=%d handle=%u len=%u)",
-             rc, this->conn_handle_, (unsigned) this->rpc_result_handle_, (unsigned) payload.size());
-  } else {
-    ESP_LOGD(TAG, "send_response_: notified %u bytes on RPC Result", (unsigned) payload.size());
+    case ATTR_DIS_SOFTWARE:
+#ifdef ESPHOME_PROJECT_VERSION
+      return append_string(ctxt->om, ESPHOME_PROJECT_VERSION);
+#else
+      return append_string(ctxt->om, "ESPHome " ESPHOME_VERSION);
+#endif
+    default:
+      return BLE_ATT_ERR_UNLIKELY;
   }
 }
 
-void NimBLEImprov::on_nimble_sync_() {
-  if (global_nimble_improv == nullptr) {
-    return;
-  }
-  global_nimble_improv->nimble_synced_ = true;
-  ESP_LOGI(TAG, "Received NimBLE sync callback");
-}
-
-}  // namespace nimble_improv
-}  // namespace esphome
+}  // namespace esphome::nimble_improv

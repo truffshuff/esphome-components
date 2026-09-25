@@ -76,7 +76,7 @@ See the [full example](examples/sy6970/t-display-s3-long.yaml) in the [examples]
 [PinkyWinky](https://github.com/buglloc/pinky-winky/) (BLE beacon) integration.
 
 Requirements:
-  - ESP-IDF (requires `esp32_ble_tracker`)
+  - ESP-IDF and a BLE tracker: `esp32_ble_tracker` (Bluedroid) or `nimble_tracker` (NimBLE)
 
 Minimal example:
 ```yaml
@@ -104,3 +104,23 @@ binary_sensor:
 See the [full example](examples/pinky_winky/bike-xiao-esps3.yaml) for usage with  [Seeed Studio XIAO ESP32S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/) in the [examples](examples) folder.
 
 Post about: [Open Sesame: PinkyWinky](https://ut.buglloc.com/2024/06/open-sesame/)
+
+## NimBLE Bluetooth stack
+
+An alternative to ESPHome's Bluedroid-based BLE components, for ESPHome
+2026.9.0 and later:
+
+| Component | Replaces | |
+|---|---|---|
+| [nimble_base](components/nimble_base) | `esp32_ble` | Stack bring-up, security, enable/disable |
+| [nimble_tracker](components/nimble_tracker) | `esp32_ble_tracker` | Scanning, `on_ble_*` triggers, BLE sensors |
+| [bluetooth_proxy](components/bluetooth_proxy) + [bluetooth_connection](components/bluetooth_connection) + [ble_device_base](components/ble_device_base) | the built-in ones | ESPHome's own proxy code, vendored with a NimBLE backend |
+| [nimble_improv](components/nimble_improv) | `esp32_improv` | Improv WiFi provisioning |
+
+Home Assistant sees the same proxy behaviour as from a Bluedroid proxy, with a
+smaller flash and internal-RAM footprint. Parity status and the hardware test
+plan are in [docs/NIMBLE_PARITY.md](docs/NIMBLE_PARITY.md). How the vendored
+components are maintained is in [components/VENDORED.md](components/VENDORED.md).
+Examples: [examples/nimble](examples/nimble).
+
+`nimble_proxy` is retired; its README lists the replacement config.

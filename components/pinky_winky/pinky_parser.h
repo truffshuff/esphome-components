@@ -3,8 +3,7 @@
 #include "esphome/core/defines.h"
 
 #ifdef USE_ESP32
-#include "esphome/components/esp32_ble/ble.h"
-#include "esphome/components/esp32_ble/ble_uuid.h"
+#include "esphome/components/ble_device_base/ble_device.h"
 
 namespace esphome {
 namespace pinky_winky {
@@ -19,7 +18,7 @@ class PinkyParser {
 
 public:
   void setup();
-  bool is_pinky_uuid(const esp32_ble::ESPBTUUID uuid);
+  bool is_pinky_uuid(const ble_device_base::ESPBTUUID uuid);
   void set_secret(const std::string &secret);
   bool have_secret();
 
@@ -27,7 +26,7 @@ public:
 
 protected:
   std::string secret_;
-  esp32_ble::ESPBTUUID company_uuid_;
+  ble_device_base::ESPBTUUID company_uuid_;
 
 };
 
