@@ -6,11 +6,30 @@ This covers the NimBLE stack in this repository (`nimble_base`,
 Bluedroid stack (`esp32_ble`, `esp32_ble_tracker`, `bluetooth_proxy`,
 `esp32_improv`).
 
-**Status: source-proven, not yet hardware-verified.** Every row marked parity
+**Status: source-proven, partly hardware-verified.** Every row marked parity
 was checked against the ESPHome 2026.9.0 and NimBLE (ESP-IDF 5.5.5) sources.
 Three builds compile cleanly: the proxy, the proxy plus on-device sensors, and
-the full halo device. None of it has run on a device. The last section lists
-the hardware tests that turn "source-proven" into "verified".
+the full halo device. The last section lists the hardware tests that turn
+"source-proven" into "verified".
+
+**Hardware results so far** (halo-v1-79e384, 1 slot, 2026-09-25/26):
+
+- Scanning overnight (7 h, ~30 reports/s) with no crash. With the scan ring at
+  256 slots, 0 reports are dropped through 2.5 s main-loop stalls.
+- HA connects while scanning. The scan stops for the connect and resumes
+  after it with `connection_scan_window`. The slot is freed and the scan window
+  and coexistence are restored on every disconnect, including connects that HA
+  cancels after 20 s.
+- Uncached connect: MTU 247, discovery done in ~3.4 s. Reconnect with HA's
+  cache (`V3_WITH_CACHE`): connected in ~0.3 s with no discovery.
+- A HomeKit accessory paired over BLE through the proxy (pair-setup, local
+  disconnect, cached reconnect for pair-verify).
+- Min free internal heap ~63-67 KB, the same as the previous fork. An open
+  link did not change free internal heap.
+
+Not yet run: the remaining rows of the test plan, notably notify/indicate
+rates, long writes, pair/unpair from HA, host reset, OTA with a link open, and
+the Bluedroid side of each comparison.
 
 ## How parity is achieved
 
