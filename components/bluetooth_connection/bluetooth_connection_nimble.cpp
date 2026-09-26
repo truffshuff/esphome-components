@@ -545,10 +545,12 @@ void NimBLEGattClient::handle_event_(const NimBLEGattEvent &event) {
         mtu = ble_device_base::DEFAULT_ATT_MTU;
       this->mtu_.store(mtu);
       this->state_ = EngineState::READY;
-      // Scanning resumes and runs alongside the established link.
-      this->release_scan_inhibit_();
+      // Link up before the inhibit is released, so the coexistence preference
+      // stays on Bluetooth instead of dropping to balanced for one call.
       this->link_up_ = true;
       this->parent_->on_link_up();
+      // Scanning resumes and runs alongside the established link.
+      this->release_scan_inhibit_();
       // INFO, not DEBUG: halo-style builds run the logger at INFO, and the
       // upstream wrapper reports connect/disconnect at DEBUG only.
       [[maybe_unused]] char peer[18];  // unused when the logger level is above INFO
