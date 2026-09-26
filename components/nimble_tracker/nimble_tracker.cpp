@@ -334,6 +334,7 @@ bool NimBLETracker::request_scan_mode(bool active) {
 // ---- GATT backend coordination ----
 
 void NimBLETracker::inhibit_scan() {
+  this->connect_attempts_++;
   this->inhibit_count_++;
   this->update_coex_preference_();
   if (this->scan_running_) {
@@ -350,6 +351,7 @@ void NimBLETracker::release_scan_inhibit() {
 }
 
 void NimBLETracker::on_link_up() {
+  this->links_established_++;
   this->links_up_++;
   this->update_coex_preference_();
 }

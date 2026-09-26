@@ -129,6 +129,16 @@ class NimBLETracker : public Component,
   void on_link_up();
   void on_link_down();
 
+  // ---- diagnostics (template sensors) ----
+  /// Proxy links currently established (GATT client side; Improv's
+  /// peripheral link is not counted).
+  uint8_t get_active_links() const { return this->links_up_; }
+  /// Since boot: outgoing connect attempts, and those that reached a usable
+  /// link. Monotonic, so a link too short for a polled sensor still shows.
+  uint32_t get_connect_attempts() const { return this->connect_attempts_; }
+  uint32_t get_links_established() const { return this->links_established_; }
+  uint32_t get_dropped_reports() const { return this->dropped_reports_; }
+
   // ---- nimble_base::NimBLEStackListener ----
   void on_nimble_synced() override;
   void on_nimble_reset(int reason) override;
@@ -165,6 +175,8 @@ class NimBLETracker : public Component,
   uint32_t scan_period_start_{0};
   uint32_t last_scan_start_attempt_{0};
   uint32_t dropped_reports_{0};
+  uint32_t connect_attempts_{0};
+  uint32_t links_established_{0};
   uint8_t inhibit_count_{0};
   uint8_t links_up_{0};
   ble_device_base::ScannerState scanner_state_{ble_device_base::ScannerState::IDLE};
