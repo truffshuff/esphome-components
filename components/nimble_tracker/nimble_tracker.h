@@ -51,9 +51,12 @@ struct ScanEvent {
   int reason{0};       // COMPLETE: why the scan ended
 };
 
-// Drained every loop iteration. 64 reports cover ~a second of a busy
-// environment at the default duty cycle; overflow is counted, never blocking.
-static constexpr uint16_t SCAN_EVENT_QUEUE_SIZE = 64;
+// Drained every loop iteration; overflow is counted, never blocking. Sized for
+// a blocked main loop, not for steady state: a 2.5 s stall (e.g. an
+// online_image download) at ~40 reports/s is ~100 reports, and 64 slots
+// dropped bursts of 15-20 on halo. 256 x ~48 B = ~12 KB, PSRAM first
+// (EventRing allocates through RAMAllocator).
+static constexpr uint16_t SCAN_EVENT_QUEUE_SIZE = 256;
 
 class NimBLETracker : public Component,
                       public nimble_base::NimBLEStackListener,
