@@ -1,0 +1,80 @@
+# LilyGo T-Display S3 Long: core mipi_spi display + this repo's AXS15231 touchscreen.
+# Tapping the button changes its label.
+esphome:
+  name: t-display-s3-long
+  min_version: 2026.9.0
+  on_boot:
+    - output.turn_on: backlight
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+external_components:
+  - source: github://truffshuff/esphome-components
+    components: [axs15231]
+
+logger:
+
+spi:
+  id: lily_spi
+  type: quad
+  clk_pin: 17
+  data_pins: [13, 18, 21, 14]
+
+i2c:
+  - id: touch_i2c
+    sda: 15
+    scl: 10
+    frequency: 400kHz
+
+output:
+  - platform: gpio
+    pin: 1
+    id: backlight
+
+display:
+  - platform: mipi_spi
+    id: lily_display
+    model: AXS15231
+    bus_mode: quad
+    data_rate: 5MHz
+    spi_id: lily_spi
+    dimensions:
+      height: 640
+      width: 180
+    cs_pin: 12
+    reset_pin: 16
+    auto_clear_enabled: false
+
+touchscreen:
+  - platform: axs15231
+    id: lily_touch
+    display: lily_display
+    i2c_id: touch_i2c
+    interrupt_pin: GPIO11
+
+lvgl:
+  displays: [lily_display]
+  touchscreens: [lily_touch]
+  widgets:
+    - button:
+        id: tap_button
+        align: CENTER
+        width: 140
+        height: 80
+        widgets:
+          - label:
+              id: tap_label
+              align: CENTER
+              text: "Tap me"
+        on_click:
+          - lvgl.label.update:
+              id: tap_label
+              text: "Tapped"
