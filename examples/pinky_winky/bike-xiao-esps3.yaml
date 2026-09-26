@@ -10,7 +10,9 @@ esphome:
     board_build.flash_mode: dio
 
 external_components:
-  - source: github://buglloc/esphome-components
+  # This fork: its pinky_winky binds through ble_device_base, so it also runs
+  # on nimble_tracker. buglloc's original supports esp32_ble_tracker only.
+  - source: github://truffshuff/esphome-components
     components: [ pinky_winky ]
 
 esp32:

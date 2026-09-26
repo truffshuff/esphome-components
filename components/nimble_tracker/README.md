@@ -25,7 +25,9 @@ nimble_tracker:
     continuous: true
   on_ble_advertise:
     - then:
-        - lambda: 'ESP_LOGD("ble", "%s", x.address_str_to(buf));'
+        - lambda: |-
+            char buf[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+            ESP_LOGD("ble", "%s", x.address_str_to(buf));
   on_ble_service_data_advertise: ...
   on_ble_manufacturer_data_advertise: ...
   on_scan_end: ...

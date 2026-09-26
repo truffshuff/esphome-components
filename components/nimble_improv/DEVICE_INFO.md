@@ -1,66 +1,29 @@
 # Device Information Service
 
-The `nimble_improv` component automatically exposes a comprehensive BLE Device Information Service with details about your device.
+`nimble_improv` registers a standard BLE Device Information Service (UUID `0x180A`)
+next to the Improv service. It is part of the same GATT server, so it is only
+reachable while Improv is advertising — that is, while the device needs WiFi
+provisioning (see the README's "When it runs").
 
-## Characteristics Exposed
+All characteristics are read-only. Each value is produced when a client reads it
+(`nimble_improv.cpp`, the `ATTR_DIS_*` cases), from compile-time configuration
+and the chip itself.
 
-### 1. Manufacturer Name (0x2A29)
-**Populated from your YAML config:**
-```yaml
-esphome:
-  name: my-device
-  project:
-    name: "yourcompany.product-name"  # ← Used here
-    version: "1.0.0"
-```
-- **Shows**: `"yourcompany.product-name"` if project name is defined
-- **Fallback**: `"ESPHome"` if no project name
+## Characteristics
 
-### 2. Model Number (0x2A24)
-**Populated from friendly_name or board:**
-```yaml
-esphome:
-  name: my-device
-  friendly_name: "Living Room Sensor"  # ← Used here
+| Characteristic | UUID | Value | Fallback |
+|---|---|---|---|
+| Manufacturer Name | `0x2A29` | `esphome: project: name` | `ESPHome` |
+| Model Number | `0x2A24` | `esphome: friendly_name` | `esphome: name` |
+| Serial Number | `0x2A25` | `esphome: name` | — |
+| Hardware Revision | `0x2A27` | IDF target, silicon revision and core count, e.g. `esp32s3 rev 0.2 (2 cores)` | — |
+| Firmware Revision | `0x2A26` | Firmware build time, e.g. `2026-09-26 15:32:10 -0400` | — |
+| Software Revision | `0x2A28` | `esphome: project: version` | `ESPHome <version>`, e.g. `ESPHome 2026.9.0` |
 
-esp32:
-  board: esp32dev  # ← Fallback if no friendly_name
-```
-- **Shows**: `"Living Room Sensor"` (friendly_name preferred)
-- **Fallback**: `"esp32dev"` (board type)
-- **Last resort**: `"ESP32"`
+The hardware revision's minor number is the chip's `revision % 100`: an ESP32-S3
+v0.2 reads `rev 0.2`.
 
-### 3. Serial Number (0x2A25)
-**Populated from device name:**
-```yaml
-esphome:
-  name: living-room-sensor  # ← Used here (hostname)
-```
-- **Shows**: `"living-room-sensor"` (unique device identifier)
-
-### 4. Hardware Revision (0x2A27)
-**Automatically detected from ESP32 chip:**
-- **Shows**: `"ESP32 Rev 3 (2 cores)"` (chip model, silicon revision, core count)
-- Dynamically reads chip information at runtime
-
-### 5. Firmware Revision (0x2A26)
-**Automatically populated:**
-- **Shows**: `"Jan 15 2025, 14:30:00"` (compilation timestamp)
-- Useful for tracking when firmware was built
-
-### 6. Software Revision (0x2A28)
-**Populated from project version and ESPHome version:**
-```yaml
-esphome:
-  name: my-device
-  project:
-    name: "yourcompany.product-name"
-    version: "1.0.0"  # ← Used here
-```
-- **Shows**: `"1.0.0 (ESPHome 2024.12.0)"` if project version defined
-- **Fallback**: `"ESPHome 2024.12.0"` if no project version
-
-## Complete Example Configuration
+## Example
 
 ```yaml
 esphome:
@@ -71,97 +34,31 @@ esphome:
     version: "2.1.0"
 
 esp32:
-  board: esp32dev
+  board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
 
 nimble_base:
 
 nimble_improv:
-  authorizer: none
 ```
 
-### What BLE clients will see:
+A client reading the service sees:
 
 | Characteristic | Value |
-|----------------|-------|
-| Manufacturer | `"mycompany.smart-sensor"` |
-| Model Number | `"Living Room Sensor"` |
-| Serial Number | `"living-room-sensor"` |
-| Hardware Revision | `"ESP32 Rev 3 (2 cores)"` |
-| Firmware Revision | `"Jan 15 2025, 14:30:00"` |
-| Software Revision | `"2.1.0 (ESPHome 2024.12.0)"` |
+|---|---|
+| Manufacturer | `mycompany.smart-sensor` |
+| Model Number | `Living Room Sensor` |
+| Serial Number | `living-room-sensor` |
+| Hardware Revision | `esp32s3 rev 0.2 (2 cores)` |
+| Firmware Revision | `2026-09-26 15:32:10 -0400` |
+| Software Revision | `2.1.0` |
 
-## Minimal Configuration
+Without `project:` and `friendly_name:` the same device reports `ESPHome`,
+`living-room-sensor`, `living-room-sensor`, and `ESPHome 2026.9.0`.
 
-If you don't define project information, sensible defaults are used:
+## Viewing it
 
-```yaml
-esphome:
-  name: my-device
-
-esp32:
-  board: esp32dev
-  framework:
-    type: esp-idf
-
-nimble_base:
-
-nimble_improv:
-  authorizer: none
-```
-
-### What BLE clients will see:
-
-| Characteristic | Value |
-|----------------|-------|
-| Manufacturer | `"ESPHome"` |
-| Model Number | `"esp32dev"` |
-| Serial Number | `"my-device"` |
-| Hardware Revision | `"ESP32 Rev 3 (2 cores)"` |
-| Firmware Revision | `"Jan 15 2025, 14:30:00"` |
-| Software Revision | `"ESPHome 2024.12.0"` |
-
-## Use Cases
-
-### 1. Device Management
-When scanning BLE devices, you can identify:
-- Which product line it belongs to (Manufacturer)
-- Human-readable name (Model Number)
-- Unique device ID (Serial Number)
-
-### 2. Support & Debugging
-Support staff can quickly see:
-- Hardware version (chip model and revision)
-- When firmware was compiled
-- Software version (your app version + ESPHome version)
-
-### 3. Improv WiFi Provisioning
-Improv apps can display device information during WiFi setup, helping users:
-- Identify the correct device to provision
-- Verify they're configuring the right hardware
-- Check firmware/software versions
-
-### 4. Inventory Management
-For commercial products:
-- Track product variants (Model Number)
-- Maintain device registry (Serial Number)
-- Verify hardware revisions in the field
-
-## Viewing Device Information
-
-You can view this information using:
-- **nRF Connect** (iOS/Android) - Browse GATT services
-- **LightBlue** (iOS/macOS) - Device Information Service tab
-- **Improv WiFi apps** - Many display device info during provisioning
-- **Home Assistant** - Shown in device details after BLE discovery
-
-## Technical Details
-
-All characteristics are:
-- **Read-only** (cannot be written by clients)
-- **Standard BLE UUIDs** (part of official Bluetooth spec)
-- **Automatically populated** (no code changes needed)
-- **Static values** (read once at connection time)
-
-The Device Information Service UUID is `0x180A` (standard BLE service).
+Any BLE GATT browser shows the service while the device is provisioning, for
+example nRF Connect (iOS/Android) or LightBlue (iOS/macOS). Improv clients may
+display it during setup.

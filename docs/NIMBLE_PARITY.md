@@ -46,6 +46,11 @@ upstream code.
 
 ## Parity matrix
 
+"Parity" means the NimBLE path was checked line by line against the Bluedroid
+source. "(HW)" marks rows whose parity also depends on stack behaviour that only
+a hardware run can confirm; those stay unverified until the matching test plan
+row has been run on both stacks. The NimBLE results so far are listed above.
+
 | Area | Status | Notes |
 |---|---|---|
 | Stack init, failure marking | Parity | `nimble_base` marks itself and its dependents failed, like `esp32_ble`. The host task starts directly; the old 15 s fallback is gone. |
