@@ -80,6 +80,8 @@ class NimBLETracker : public Component,
   void set_scan_window(uint32_t units) { this->scan_window_ = units; }
   void set_connection_scan_window(uint32_t units) { this->connection_scan_window_ = units; }
   void set_scan_duration(uint32_t ms) { this->scan_duration_ = ms; }
+  /// Periodic INFO counters line; 0 = off.
+  void set_log_stats_interval(uint32_t ms) { this->stats_interval_ms_ = ms; }
   void set_scan_active(bool active) { this->scan_active_ = active; }
   void set_configured_continuous(bool continuous) {
     this->configured_continuous_ = continuous;
@@ -138,6 +140,9 @@ class NimBLETracker : public Component,
   uint32_t get_connect_attempts() const { return this->connect_attempts_; }
   uint32_t get_links_established() const { return this->links_established_; }
   uint32_t get_dropped_reports() const { return this->dropped_reports_; }
+  /// Advertising reports taken off the controller since boot (scan responses
+  /// included), before merging.
+  uint32_t get_reports_received() const { return this->reports_received_; }
 
   // ---- nimble_base::NimBLEStackListener ----
   void on_nimble_synced() override;
@@ -160,6 +165,7 @@ class NimBLETracker : public Component,
                                                                          : this->scan_window_;
   }
   void update_coex_preference_();
+  void log_stats_(uint32_t now);
 
   nimble_base::EventRing<ScanEvent, SCAN_EVENT_QUEUE_SIZE> scan_events_;
   ble_device_base::ScanResponseMerger merger_;
@@ -177,6 +183,14 @@ class NimBLETracker : public Component,
   uint32_t dropped_reports_{0};
   uint32_t connect_attempts_{0};
   uint32_t links_established_{0};
+  uint32_t reports_received_{0};
+  uint32_t scan_responses_received_{0};
+  // log_stats_ deltas
+  uint32_t stats_interval_ms_{0};
+  uint32_t stats_last_ms_{0};
+  uint32_t stats_last_reports_{0};
+  uint32_t stats_last_scan_responses_{0};
+  uint32_t stats_last_dropped_{0};
   uint8_t inhibit_count_{0};
   uint8_t links_up_{0};
   ble_device_base::ScannerState scanner_state_{ble_device_base::ScannerState::IDLE};

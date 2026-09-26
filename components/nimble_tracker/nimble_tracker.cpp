@@ -42,7 +42,7 @@ static constexpr uint8_t ADV_EVENT_TYPE_ADV_IND = 0;
 static constexpr uint8_t ADV_EVENT_TYPE_ADV_SCAN_IND = 2;
 static constexpr uint8_t ADV_EVENT_TYPE_SCAN_RSP = 4;
 
-// [[maybe_unused]]: only ESP_LOGCONFIG uses it, which the logger compiles out below CONFIG level.
+// [[maybe_unused]]: only ESP_LOGCONFIG / the stats line use it, which the logger can compile out.
 [[maybe_unused]] static const char *scanner_state_to_string(ScannerState state) {
   switch (state) {
     case ScannerState::IDLE:
@@ -129,6 +129,8 @@ void NimBLETracker::loop() {
   const uint32_t now = App.get_loop_component_start_time();
   if (!this->merger_.empty())
     this->merger_.sweep(now);
+  if (this->stats_interval_ms_ != 0 && now - this->stats_last_ms_ >= this->stats_interval_ms_)
+    this->log_stats_(now);
 
 #ifdef USE_OTA_STATE_LISTENER
   if (this->ota_in_progress_)
@@ -181,7 +183,9 @@ void NimBLETracker::handle_event_(const ScanEvent &event) {
     return;
   }
 
+  this->reports_received_++;
   if (event.event_type == ADV_EVENT_TYPE_SCAN_RSP) {
+    this->scan_responses_received_++;
     this->merger_.submit_scan_rsp(event.mac, event.rssi, event.addr_type, event.data, event.data_len);
     return;
   }
@@ -420,6 +424,25 @@ void NimBLETracker::on_ota_global_state(ota::OTAState state, float progress, uin
 }
 #endif
 
+void NimBLETracker::log_stats_(uint32_t now) {
+  // The old nimble_proxy "Diag counters" line, for INFO-level builds where the
+  // DEBUG scan/connection lines are compiled out. Deltas are per interval.
+  const uint32_t elapsed_s = std::max<uint32_t>((now - this->stats_last_ms_) / 1000, 1);
+  const uint32_t reports = this->reports_received_ - this->stats_last_reports_;
+  const uint32_t scan_rsp = this->scan_responses_received_ - this->stats_last_scan_responses_;
+  const uint32_t dropped = this->dropped_reports_ - this->stats_last_dropped_;
+  this->stats_last_ms_ = now;
+  this->stats_last_reports_ = this->reports_received_;
+  this->stats_last_scan_responses_ = this->scan_responses_received_;
+  this->stats_last_dropped_ = this->dropped_reports_;
+  ESP_LOGI(TAG,
+           "Stats: %s %s, %" PRIu32 " reports (%" PRIu32 "/s, %" PRIu32 " scan rsp), %" PRIu32
+           " dropped; links %u, connects %" PRIu32 " (%" PRIu32 " established), coex %s",
+           scanner_state_to_string(this->scanner_state_), this->scan_active_ ? "active" : "passive", reports,
+           reports / elapsed_s, scan_rsp, dropped, this->links_up_, this->connect_attempts_,
+           this->links_established_, this->coex_prefer_bt_ ? "bt" : "balanced");
+}
+
 void NimBLETracker::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "NimBLE Tracker:\n"
@@ -438,6 +461,9 @@ void NimBLETracker::dump_config() {
                 scanner_state_to_string(this->scanner_state_));
   if (this->dropped_reports_ != 0) {
     ESP_LOGCONFIG(TAG, "  Reports dropped (queue full): %" PRIu32, this->dropped_reports_);
+  }
+  if (this->stats_interval_ms_ != 0) {
+    ESP_LOGCONFIG(TAG, "  Stats log interval: %" PRIu32 " s", this->stats_interval_ms_ / 1000);
   }
 }
 

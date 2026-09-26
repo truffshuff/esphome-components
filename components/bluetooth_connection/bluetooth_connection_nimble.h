@@ -185,6 +185,8 @@ class NimBLEGattClient final : public Component,
   int try_gap_connect_();
   void cleanup_link_state_();
   void release_scan_inhibit_();
+  /// "AA:BB:CC:DD:EE:FF" (display order) into a caller-owned 18-byte buffer.
+  const char *peer_str_(char *buf) const;
   int start_read_(uint16_t handle);
   bool notify_subscribed_(uint16_t handle) const;
   uint16_t conn_handle_() const { return this->conn_handle_atomic_.load(); }

@@ -79,10 +79,24 @@ radio), and `connection_scan_window` defaults to 30 ms. Without WiFi, the window
 defaults to 30 ms. An explicit `window` is never changed, and a window above
 600 ms with WiFi logs a warning.
 
-### One difference
+### Differences
 
-A scan period that never completes is restarted. `esp32_ble_tracker` reboots
-the device in that case.
+- A scan period that never completes is restarted. `esp32_ble_tracker` reboots
+  the device in that case.
+- `log_stats_interval` (default `0s`, off; minimum `10s`) is an addition. It
+  prints one INFO line per interval with the scanner state and mode, reports
+  and scan responses received, dropped reports, open links, connect attempts,
+  established links and the coexistence preference:
+
+  ```
+  [I][nimble_tracker]: Stats: RUNNING active, 5412 reports (90/s, 1873 scan rsp), 0 dropped; links 0, connects 0 (0 established), coex balanced
+  ```
+
+  It is meant for builds whose logger runs at INFO, where the tracker's DEBUG
+  lines are compiled out. The same counters are available to template sensors
+  through `get_reports_received()`, `get_dropped_reports()`,
+  `get_active_links()`, `get_connect_attempts()` and
+  `get_links_established()`.
 
 ## Migrating from `nimble_proxy`
 

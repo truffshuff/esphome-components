@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -526,7 +527,7 @@ void NimBLEGattClient::handle_event_(const NimBLEGattEvent &event) {
       break;
     case NimBLEGattEvent::CONNECT_FAILED:
       if (this->state_ == EngineState::CONNECTING) {
-        ESP_LOGW(TAG, "[%u] Connect failed, status=%d", this->engine_index_, event.status);
+        // fail_connection_ logs the outcome.
         this->fail_connection_(map_connection_reason(event.status));
       }
       break;
@@ -548,7 +549,10 @@ void NimBLEGattClient::handle_event_(const NimBLEGattEvent &event) {
       this->release_scan_inhibit_();
       this->link_up_ = true;
       this->parent_->on_link_up();
-      ESP_LOGV(TAG, "[%u] Link ready, MTU %u", this->engine_index_, mtu);
+      // INFO, not DEBUG: halo-style builds run the logger at INFO, and the
+      // upstream wrapper reports connect/disconnect at DEBUG only.
+      [[maybe_unused]] char peer[18];  // unused when the logger level is above INFO
+      ESP_LOGI(TAG, "[%u] [%s] Connected, MTU %u", this->engine_index_, this->peer_str_(peer), mtu);
       this->listener_->on_connection_state(true, mtu, 0);
       break;
     }
@@ -647,7 +651,23 @@ void NimBLEGattClient::cleanup_link_state_() {
   this->release_services();
 }
 
+const char *NimBLEGattClient::peer_str_(char *buf) const {
+  const uint8_t *a = this->peer_addr_;
+  snprintf(buf, 18, "%02X:%02X:%02X:%02X:%02X:%02X", a[5], a[4], a[3], a[2], a[1], a[0]);
+  return buf;
+}
+
 void NimBLEGattClient::fail_connection_(int reason) {
+  {
+    [[maybe_unused]] char peer[18];
+    if (this->link_up_) {
+      ESP_LOGI(TAG, "[%u] [%s] Disconnected, reason 0x%02x", this->engine_index_, this->peer_str_(peer), reason);
+    } else if (this->cancel_requested_ || this->state_ == EngineState::DISCONNECTING) {
+      ESP_LOGI(TAG, "[%u] [%s] Connect cancelled", this->engine_index_, this->peer_str_(peer));
+    } else {
+      ESP_LOGW(TAG, "[%u] [%s] Connect failed, reason 0x%02x", this->engine_index_, this->peer_str_(peer), reason);
+    }
+  }
   NimBLEGattClient *expected = this;
   connect_owner.compare_exchange_strong(expected, nullptr);
   if (this->state_ == EngineState::CONNECTING && this->conn_handle_() != BLE_HS_CONN_HANDLE_NONE) {

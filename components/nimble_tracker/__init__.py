@@ -50,6 +50,7 @@ ble_device_base.register_hub_provider("nimble_tracker")
 CONF_NIMBLE_TRACKER_ID = "nimble_tracker_id"
 CONF_NIMBLE_BASE_ID = "nimble_base_id"
 CONF_CONNECTION_SCAN_WINDOW = ble_device_base.CONF_CONNECTION_SCAN_WINDOW
+CONF_LOG_STATS_INTERVAL = "log_stats_interval"
 
 nimble_tracker_ns = cg.esphome_ns.namespace("nimble_tracker")
 NimBLETracker = nimble_tracker_ns.class_(
@@ -113,6 +114,12 @@ def _warn_long_scan_window_with_wifi(config: ConfigType) -> ConfigType:
     return config
 
 
+def _validate_stats_interval(value):
+    if 0 < value.total_milliseconds < 10000:
+        raise cv.Invalid("log_stats_interval must be 0s (off) or at least 10s")
+    return value
+
+
 SCAN_PARAMETERS_SCHEMA = ble_device_base.scan_parameters_schema(
     "320ms", window_default=_scan_window_default, connection_window=True
 )
@@ -140,6 +147,12 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_ON_SCAN_END): ble_automation.scan_end_trigger_schema(
                 ble_automation.BLEEndOfScanTrigger
+            ),
+            # Not in esp32_ble_tracker: a periodic INFO line with scan and
+            # connection counters, for builds whose logger runs at INFO.
+            # 0s (default) disables it.
+            cv.Optional(CONF_LOG_STATS_INTERVAL, default="0s"): cv.All(
+                cv.positive_time_period_milliseconds, _validate_stats_interval
             ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
@@ -177,6 +190,8 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_scan_duration(scan[CONF_DURATION].total_milliseconds))
     cg.add(var.set_scan_active(scan[CONF_ACTIVE]))
     cg.add(var.set_configured_continuous(scan[CONF_CONTINUOUS]))
+    if (stats_ms := config[CONF_LOG_STATS_INTERVAL].total_milliseconds) > 0:
+        cg.add(var.set_log_stats_interval(stats_ms))
 
     for conf in config.get(CONF_ON_BLE_ADVERTISE, []):
         await ble_automation.advertise_trigger_to_code(conf, var)
