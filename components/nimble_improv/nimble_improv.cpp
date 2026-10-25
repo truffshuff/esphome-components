@@ -564,9 +564,9 @@ void NimBLEImprov::check_wifi_connection_() {
 
     std::array<uint8_t, improv::RPC_RESPONSE_MAX_SIZE> buf;
     improv::RpcResponseBuilder builder(buf, improv::WIFI_SETTINGS);
-#ifdef USE_ESP32_IMPROV_NEXT_URL
-    // improv_base's next_url helper is keyed on esp32_improv's define; codegen
-    // emits it for this component (see __init__.py).
+#ifdef USE_IMPROV_NEXT_URL
+    // improv_base emits this define when any Improv transport sets next_url:
+    // (ESPHome 2026.10.0; see __init__.py).
     this->add_next_url_(builder, MAX_NEXT_URL_LEN);
 #endif
     builder.add_string(ESPHOME_MY_LINK, sizeof(ESPHOME_MY_LINK) - 1);

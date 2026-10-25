@@ -15,7 +15,7 @@ esp32:
 logger:
 
 # No network: the device waits for Improv provisioning. ESPHome's wifi schema
-# only accepts a network-less config for esp32_improv / improv_serial, so a
+# only accepts a network-less config for improv_ble / improv_serial, so a
 # fallback hotspot is declared (it is also a second way in).
 wifi:
   ap:

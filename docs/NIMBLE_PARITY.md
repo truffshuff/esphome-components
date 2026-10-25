@@ -100,7 +100,7 @@ component without re-implementing upstream components:
 - Improv start/stop: the WiFi component calls `esp32_improv` directly, so
   `nimble_improv` watches WiFi state itself. The triggers are the same.
 - A `wifi:` block with no network is only accepted by ESPHome's schema when
-  `esp32_improv` or `improv_serial` is configured. With `nimble_improv` alone,
+  `improv_ble` (`esp32_improv` before 2026.10.0) or `improv_serial` is configured. With `nimble_improv` alone,
   add a fallback `ap:` (Improv still starts, since no network is stored).
 
 **Deliberate:**

@@ -1,8 +1,10 @@
 # nimble_improv
 
 [Improv WiFi](https://www.improv-wifi.com/) provisioning over NimBLE: the
-NimBLE counterpart of ESPHome's `esp32_improv`. Its behaviour follows
-`esp32_improv` in ESPHome 2026.9.0.
+NimBLE counterpart of ESPHome's `esp32_improv`, renamed `improv_ble` in
+ESPHome 2026.10.0. Its behaviour follows `esp32_improv` in ESPHome 2026.9.0;
+codegen needs ESPHome 2026.10.0 or newer (`improv_base.setup_improv_core()`
+changed signature in that release).
 
 ## Configuration
 

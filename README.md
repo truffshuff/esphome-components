@@ -4,7 +4,7 @@ ESPHome external components, forked from
 [buglloc/esphome-components](https://github.com/buglloc/esphome-components) (via
 [yashmulgaonkar/esphome-components](https://github.com/yashmulgaonkar/esphome-components)).
 They are developed alongside the [Halo](https://github.com/truffshuff/halo) air-quality
-display (LilyGo T-Display S3 Long) and target **ESPHome 2026.9.0 or newer** on ESP-IDF.
+display (LilyGo T-Display S3 Long) and target **ESPHome 2026.10.0 or newer** on ESP-IDF.
 
 Use it from your YAML. Pin a commit SHA so a push here cannot change your build:
 ```yaml
@@ -120,7 +120,7 @@ An alternative to ESPHome's Bluedroid-based BLE components, for ESPHome
 | [nimble_base](components/nimble_base) | `esp32_ble` | Stack bring-up, security, enable/disable |
 | [nimble_tracker](components/nimble_tracker) | `esp32_ble_tracker` | Scanning, `on_ble_*` triggers, BLE sensors |
 | [bluetooth_proxy](components/bluetooth_proxy) + [bluetooth_connection](components/bluetooth_connection) + [ble_device_base](components/ble_device_base) | the built-in ones | ESPHome's own proxy code, vendored with a NimBLE backend |
-| [nimble_improv](components/nimble_improv) | `esp32_improv` | Improv WiFi provisioning |
+| [nimble_improv](components/nimble_improv) | `improv_ble` (`esp32_improv` before 2026.10.0) | Improv WiFi provisioning |
 
 Home Assistant sees the same proxy behaviour as from a Bluedroid proxy, with a
 smaller flash and internal-RAM footprint. Parity status and the hardware test

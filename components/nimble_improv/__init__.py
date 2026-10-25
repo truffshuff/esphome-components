@@ -111,10 +111,11 @@ async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
-    # improv_base keys its next_url helper on esp32_improv's define; emitting it
-    # here is safe because esp32_improv itself is not in a NimBLE build (and
-    # USE_IMPROV, which the WiFi component keys on, is never defined).
-    await improv_base.setup_improv_core(var, config, "esp32_improv")
+    # Since ESPHome 2026.10.0 (esphome#19264) improv_base emits one
+    # USE_IMPROV_NEXT_URL for every transport configured with next_url:, so
+    # this no longer borrows esp32_improv's define. Older ESPHome took the
+    # component name as a third argument; this call needs 2026.10.0+.
+    await improv_base.setup_improv_core(var, config)
 
     cg.add(var.set_identify_duration(config[CONF_IDENTIFY_DURATION]))
     cg.add(var.set_authorized_duration(config[CONF_AUTHORIZED_DURATION]))
