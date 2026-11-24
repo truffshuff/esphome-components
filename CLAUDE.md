@@ -2,8 +2,8 @@
 
 ESPHome external components consumed by the Halo firmware (`truffshuff/halo`, local
 clone `~/Projects/halo/halo`; read its `CLAUDE.md` and `docs/` for the device
-side). Requires **ESPHome 2026.10.0** (`nimble_improv` uses its `improv_base` API); the
-vendored components and the parity baseline are still **2026.9.0**. ESP-IDF 5.5.x, native
+side). Requires **ESPHome 2026.11.0** (`nimble_improv` uses its `improv_base` API); the
+vendored components and the parity baseline are verified against **2026.11.0**. ESP-IDF 5.5.x, native
 `esp-idf` toolchain.
 
 - Working branch: `nimble-bluedroid-parity`. Remotes: `origin` = truffshuff (fork),
@@ -51,7 +51,7 @@ vendored components and the parity baseline are still **2026.9.0**. ESP-IDF 5.5.
 
 ## Validation
 
-- A local ESPHome must be ≥ 2026.10.0 to validate or compile the examples.
+- A local ESPHome must be ≥ 2026.11.0 to validate or compile the examples.
 - `examples/nimble/nimble_both.yaml` compiling cleanly is the contract check for the
   vendored hub/GATT interfaces (VENDORED.md step 4).
 - Never run `esphome run` / `upload` / `logs` against a device without being asked.

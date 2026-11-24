@@ -72,3 +72,7 @@ Not carried: `bluetooth_connection_bluedroid.*` and `bluetooth_connection_rp2.*`
    when a method is missing, so a clean compile of
    `examples/nimble/nimble_both.yaml` confirms it.
 5. Bump the version in this file and in the three `__init__.py` headers.
+
+## Release Compatibility Notes
+
+- **ESPHome 2026.11.0**: Verified clean configuration and compilation against ESPHome 2026.11.0 with ESP-IDF 5.5.6 on ESP32-S3 (`examples/nimble/nimble_both.yaml` and `examples/axs15231/t-display-s3-long-touch.yaml`).

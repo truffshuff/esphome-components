@@ -2,7 +2,7 @@
 
 esphome:
   name: nimble-full
-  min_version: 2026.9.0
+  min_version: 2026.11.0
 
 esp32:
   board: esp32-s3-devkitc-1

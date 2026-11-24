@@ -4,7 +4,7 @@ ESPHome external components, forked from
 [buglloc/esphome-components](https://github.com/buglloc/esphome-components) (via
 [yashmulgaonkar/esphome-components](https://github.com/yashmulgaonkar/esphome-components)).
 They are developed alongside the [Halo](https://github.com/truffshuff/halo) air-quality
-display (LilyGo T-Display S3 Long) and target **ESPHome 2026.10.0 or newer** on ESP-IDF.
+display (LilyGo T-Display S3 Long) and target **ESPHome 2026.11.0 or newer** on ESP-IDF.
 
 Use it from your YAML. Pin a commit SHA so a push here cannot change your build:
 ```yaml

@@ -2,7 +2,7 @@
 # Tapping the button changes its label.
 esphome:
   name: t-display-s3-long
-  min_version: 2026.9.0
+  min_version: 2026.11.0
   on_boot:
     - output.turn_on: backlight
 
